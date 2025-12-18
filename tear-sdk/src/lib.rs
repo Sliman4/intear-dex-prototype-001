@@ -1,23 +1,71 @@
-use near_sdk::{AccountId, json_types::U128, near};
+use std::{fmt::Display, str::FromStr};
 
+use near_sdk::{
+    AccountId, NearToken,
+    json_types::U128,
+    near,
+    serde::{Deserialize, Deserializer, Serialize, Serializer},
+};
+
+/// Request for a swap operation.
+#[derive(Clone, Debug)]
 #[near(serializers=[json])]
 pub struct SwapRequest {
-    pub pool_id: PoolId,
+    /// Custom message to be passed to the dex. For example,
+    /// it could be the pool ID or route.
+    pub message: String,
+    /// The asset the user has requested to be swapped in.
     pub asset_in: AssetId,
+    /// The asset the user has requested to be swapped out.
     pub asset_out: AssetId,
+    /// The amount of the asset the user has requested to be
+    /// swapped. The response `amount_in` or `amount_out`
+    /// must match this amount.
     pub amount: SwapRequestAmount,
 }
 
+/// The swap operation was successful, release `amount_out`
+/// to the user and take `amount_in` from the user.
+///
+/// To mark operation as unsuccessful and refund the attached
+/// assets to the user, the dex must panic.
+#[derive(Clone, Debug)]
 #[near(serializers=[json])]
-pub enum SwapResponse {
-    Ok { amount_in: U128, amount_out: U128 },
-    Error { message: String },
+pub struct SwapResponse {
+    pub amount_in: U128,
+    pub amount_out: U128,
 }
 
-pub type PoolId = String;
+#[derive(Clone, Debug)]
+#[near(serializers=[json])]
+pub struct DexCallResponse {
+    pub asset_withdraw_requests: Vec<AssetWithdrawRequest>,
+    pub add_storage_deposit: NearToken,
+    pub response: near_sdk::serde_json::Value,
+}
 
-#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[near(serializers=[json, borsh])]
+#[derive(Clone, Debug)]
+#[near(serializers=[json])]
+pub struct AssetWithdrawRequest {
+    pub asset_id: AssetId,
+    pub amount: U128,
+    pub withdrawal_type: AssetWithdrawalType,
+}
+
+#[derive(Clone, Debug)]
+#[near(serializers=[json])]
+pub enum AssetWithdrawalType {
+    ToInternalUserBalance(AccountId),
+    ToInternalDexBalance(DexId),
+    WithdrawUnderlyingAsset(AccountId),
+    WithdrawUnderlyingAssetAndCall {
+        recipient_id: AccountId,
+        message: String,
+    },
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
+#[near(serializers=[borsh])]
 pub enum AssetId {
     Near,
     Nep141(AccountId),
@@ -25,8 +73,153 @@ pub enum AssetId {
     Nep171(AccountId, String),
 }
 
+impl Display for AssetId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetId::Near => write!(f, "near"),
+            AssetId::Nep141(account) => write!(f, "nep141:{account}"),
+            AssetId::Nep245(account, token_id) => write!(f, "nep245:{account}:{token_id}"),
+            AssetId::Nep171(account, token_id) => write!(f, "nep171:{account}:{token_id}"),
+        }
+    }
+}
+
+impl FromStr for AssetId {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "near" => Ok(AssetId::Near),
+            _ => match s.split_once(':') {
+                Some(("nep141", account)) => {
+                    Ok(AssetId::Nep141(account.parse().map_err(|e| {
+                        format!("Invalid account id {account}: {e}")
+                    })?))
+                }
+                Some(("nep245", rest)) => {
+                    if let Some((account, token_id)) = rest.split_once(':') {
+                        Ok(AssetId::Nep245(
+                            account
+                                .parse()
+                                .map_err(|e| format!("Invalid account id {account}: {e}"))?,
+                            token_id.to_string(),
+                        ))
+                    } else {
+                        Err(format!("Invalid asset id: {s}"))
+                    }
+                }
+                Some(("nep171", rest)) => {
+                    if let Some((account, token_id)) = rest.split_once(':') {
+                        Ok(AssetId::Nep171(
+                            account
+                                .parse()
+                                .map_err(|e| format!("Invalid account id {account}: {e}"))?,
+                            token_id.to_string(),
+                        ))
+                    } else {
+                        Err(format!("Invalid asset id: {s}"))
+                    }
+                }
+                _ => Err(format!("Invalid asset id: {s}")),
+            },
+        }
+    }
+}
+
+impl Serialize for AssetId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AssetId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(AssetId::from_str(&s).unwrap())
+    }
+}
+
+#[cfg(feature = "abi")]
+impl near_sdk::schemars::JsonSchema for AssetId {
+    fn schema_name() -> String {
+        "AssetId".to_string()
+    }
+    fn json_schema(
+        generator: &mut near_sdk::schemars::r#gen::SchemaGenerator,
+    ) -> near_sdk::schemars::schema::Schema {
+        <String as near_sdk::schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[near(serializers=[json])]
 pub enum SwapRequestAmount {
     ExactIn(U128),
     ExactOut(U128),
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
+#[near(serializers=[borsh])]
+pub struct DexId {
+    pub deployer: AccountId,
+    pub id: String,
+}
+
+impl Display for DexId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.deployer, self.id)
+    }
+}
+
+impl FromStr for DexId {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (deployer, id) = s.split_once('/').ok_or(format!("Invalid dex id: {s}"))?;
+        Ok(DexId {
+            deployer: deployer
+                .parse()
+                .map_err(|e| format!("Invalid deployer id {deployer}: {e}"))?,
+            id: id.to_string(),
+        })
+    }
+}
+
+impl Serialize for DexId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_string().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DexId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(DexId::from_str(&s).unwrap())
+    }
+}
+
+#[cfg(feature = "abi")]
+impl near_sdk::schemars::JsonSchema for DexId {
+    fn schema_name() -> String {
+        "DexId".to_string()
+    }
+    fn json_schema(
+        generator: &mut near_sdk::schemars::r#gen::SchemaGenerator,
+    ) -> near_sdk::schemars::schema::Schema {
+        <String as near_sdk::schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
+pub trait Dex {
+    fn swap(&mut self, request: SwapRequest) -> SwapResponse;
 }

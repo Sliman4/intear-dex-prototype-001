@@ -1,55 +1,57 @@
+mod asset_deposit;
+mod host_functions;
+mod internal_asset_operations;
+mod storage_management;
+
 use std::collections::HashMap;
 
-use near_sdk::{json_types::U128, near, store::LookupMap, AccountId, BorshStorageKey, NearToken};
-use tear_sdk::{AssetId, SwapRequest, SwapRequestAmount, SwapResponse};
+use near_sdk::{
+    AccountId, BorshStorageKey,
+    json_types::{Base58CryptoHash, Base64VecU8, U128},
+    near,
+    store::{IterableMap, LookupMap},
+};
+use tear_sdk::{
+    AssetId, AssetWithdrawRequest, AssetWithdrawalType, DexCallResponse, DexId, SwapRequest,
+    SwapRequestAmount, SwapResponse,
+};
 use wasmi::{Caller, Engine, Func, Linker, Module, Store};
 
-macro_rules! declare_unimplemented_host_functions {
-    (
-        $var: ident: $(
-            $(#[$attr:meta])*
-            pub fn $name:ident($($arg:ident: $arg_ty:ty),* $(,)?) $(-> $ret:tt)?;
-        )*
-    ) => {
-        $(
-            $var.func_wrap(
-                "env",
-                stringify!($name),
-                |_caller: Caller<'_, RunnerData<_, _>>, $(#[allow(unused_variables)] $arg: $arg_ty),*| -> unimplemented_host_functions_return_type!(@return_type $($ret)?) {
-                    unimplemented!(concat!("Function ", stringify!($name), " is not implemented"))
-                },
-            )
-            .expect("Failed to create host function");
-        )*
-    };
-}
-
-macro_rules! unimplemented_host_functions_return_type {
-    (@return_type !) => {
-        ()
-    };
-    (@return_type $ret:ty) => {
-        $ret
-    };
-    (@return_type) => {
-        ()
-    };
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[near(serializers=[json, borsh])]
-pub struct DexId {
-    pub deployer: AccountId,
-    pub id: String,
-}
-
-type DexPersistentStorage = HashMap<Vec<u8>, Vec<u8>>;
+use crate::{internal_asset_operations::AccountOrDexId, storage_management::StorageBalances};
 
 #[near(contract_state)]
-pub struct SandboxedDexEngine {
-    codes: LookupMap<DexId, Vec<u8>>,
-    balances: LookupMap<(DexId, AssetId), U128>,
-    storage: LookupMap<DexId, DexPersistentStorage>,
+pub struct DexEngine {
+    /// Assets that are custodied by the dex engine contract
+    /// for the dexes that run inside it. Other dexes or users
+    /// can't access other dexes' balances.
+    dex_balances: LookupMap<(DexId, AssetId), U128>,
+    /// Persistent storage for each dex, similar to contract
+    /// storage of traditional smart contract dexes. It's
+    /// public, but currently there's no way to access other
+    /// dexes' storage from dex runtime.
+    dex_storage: LookupMap<(DexId, Vec<u8>), Vec<u8>>,
+    /// Wasm code for each dex.
+    dex_codes: LookupMap<DexId, Vec<u8>>,
+    /// Storage balances for each dex, translated to storage
+    /// of this smart contract. use dex_* methods to interact
+    /// with it, such as dex_storage_deposit.
+    dex_storage_balances: StorageBalances<DexId>,
+    /// Balances for each user, custodied by the dex engine
+    /// contract for faster access. This reduces the need for
+    /// ft_transfer_call, which takes time.
+    user_balances: LookupMap<(AccountId, AssetId), U128>,
+    /// Storage balances for each user, translated to storage
+    /// of this smart contract. use storage management methods
+    /// to interact with it, such as storage_deposit.
+    user_storage_balances: StorageBalances<AccountId>,
+    /// Balances for all the funds custodied by the dex engine
+    /// contract. This means if the dex engine contract has
+    /// less than this amount, it's either bug of the asset
+    /// implementation, or funds have been drained from the
+    /// dex engine contract. And if the balance is greater
+    /// than this stored amount, it can be freely taken out
+    /// without causing any issues.
+    contract_tracked_balance: IterableMap<AssetId, U128>,
 }
 
 #[derive(BorshStorageKey)]
@@ -58,579 +60,156 @@ enum StorageKey {
     DexBalances,
     DexStorage,
     DexCodes,
+    DexStorageBalances,
+    UserBalances,
+    UserStorageBalances,
+    ContractTrackedBalance,
 }
 
-impl Default for SandboxedDexEngine {
+impl Default for DexEngine {
     fn default() -> Self {
         Self {
-            balances: LookupMap::new(StorageKey::DexBalances),
-            storage: LookupMap::new(StorageKey::DexStorage),
-            codes: LookupMap::new(StorageKey::DexCodes),
+            dex_balances: LookupMap::new(StorageKey::DexBalances),
+            dex_storage: LookupMap::new(StorageKey::DexStorage),
+            dex_codes: LookupMap::new(StorageKey::DexCodes),
+            dex_storage_balances: StorageBalances::new(StorageKey::DexStorageBalances),
+            user_balances: LookupMap::new(StorageKey::UserBalances),
+            user_storage_balances: StorageBalances::new(StorageKey::UserStorageBalances),
+            contract_tracked_balance: IterableMap::new(StorageKey::ContractTrackedBalance),
         }
     }
 }
 
-struct RunnerData<'a, Request, Response> {
-    request: Request,
+#[near(event_json(standard = "inteardex"))]
+pub enum IntearDexEvent {
+    #[event_version("1.0.0")]
+    DexDeployed {
+        dex_id: DexId,
+        code_hash: Base58CryptoHash,
+    },
+    #[event_version("1.0.0")]
+    DexEvent {
+        dex_id: DexId,
+        event: near_sdk::serde_json::Value,
+    },
+    #[event_version("1.0.0")]
+    UserDeposit {
+        account_id: AccountId,
+        asset_id: AssetId,
+        amount: U128,
+    },
+    #[event_version("1.0.0")]
+    UserWithdraw {
+        account_id: AccountId,
+        asset_id: AssetId,
+        amount: U128,
+    },
+    #[event_version("1.0.0")]
+    UserBalanceUpdate {
+        account_id: AccountId,
+        asset_id: AssetId,
+        balance: U128,
+    },
+    #[event_version("1.0.0")]
+    DexBalanceUpdate {
+        dex_id: DexId,
+        asset_id: AssetId,
+        balance: U128,
+    },
+    #[event_version("1.0.0")]
+    SwapStep {
+        dex_id: DexId,
+        request: SwapRequest,
+        amount_in: U128,
+        amount_out: U128,
+        trader: AccountId,
+    },
+}
+
+struct RunnerData<'a, Response> {
+    request: near_sdk::serde_json::Value,
     response: Option<Response>,
     registers: HashMap<u64, Vec<u8>>,
-    persistent_storage: &'a mut DexPersistentStorage,
+    dex_storage: &'a mut LookupMap<(DexId, Vec<u8>), Vec<u8>>,
     predecessor_id: AccountId,
+    dex_id: DexId,
+    dex_storage_balances: &'a StorageBalances<DexId>,
+    dex_storage_usage_before_transaction: u64,
 }
 
 #[near]
-impl SandboxedDexEngine {
-    pub fn deploy_code(&mut self, id: String, code: Vec<u8>) {
-        let dex_id = DexId {
-            deployer: near_sdk::env::predecessor_account_id(),
-            id,
-        };
-        self.codes.insert(dex_id, code);
-    }
-
+impl DexEngine {
+    /// Deploy or upgrade the code for a dex.
     #[payable]
-    pub fn swap(&mut self, dex_id: DexId) -> U128 {
+    pub fn deploy_code(&mut self, last_part_of_id: String, code_base64: Base64VecU8) {
         near_sdk::assert_one_yocto();
 
-        let code = self.codes.get(&dex_id).expect("Dex code not found");
+        let code_hash = near_sdk::env::sha256_array(&code_base64.0);
+        let dex_id = DexId {
+            deployer: near_sdk::env::predecessor_account_id(),
+            id: last_part_of_id,
+        };
+        let storage_usage_before = near_sdk::env::storage_usage();
+        self.dex_codes.insert(dex_id.clone(), code_base64.0);
+        self.dex_codes.flush();
+        let storage_usage_after = near_sdk::env::storage_usage();
+        self.dex_storage_balances
+            .charge(&dex_id, storage_usage_before, storage_usage_after);
+
+        IntearDexEvent::DexDeployed {
+            dex_id: dex_id.clone(),
+            code_hash: Base58CryptoHash::from(code_hash),
+        }
+        .emit();
+    }
+
+    /// Swap one asset for another on a specific dex.
+    #[payable]
+    pub fn swap_one_dex(
+        &mut self,
+        dex_id: DexId,
+        message: String,
+        asset_in: AssetId,
+        asset_out: AssetId,
+        amount: SwapRequestAmount,
+    ) -> (U128, U128) {
+        near_sdk::assert_one_yocto();
+
+        let swap_request = SwapRequest {
+            message,
+            asset_in,
+            asset_out,
+            amount,
+        };
+        let trader = near_sdk::env::predecessor_account_id();
+
+        let code = self.dex_codes.get(&dex_id).expect("Dex code not found");
         let engine = Engine::default();
-        let module = match Module::new(&engine, &code) {
+        let module = match Module::new(&engine, code) {
             Ok(module) => module,
             Err(err) => panic!("Failed to load module: {err:?}"),
         };
-        let swap_request = SwapRequest {
-            pool_id: "1".to_string(),
-            asset_in: AssetId::Near,
-            asset_out: AssetId::Nep141("wrap.near".parse().unwrap()),
-            amount: SwapRequestAmount::ExactIn(U128(1000000000000000000000000)),
-        };
-        let mut storage = HashMap::new();
+
+        let storage_usage_before = near_sdk::env::storage_usage();
         let mut store = Store::new(
             &engine,
-            RunnerData::<SwapRequest, SwapResponse> {
-                request: swap_request,
+            RunnerData::<SwapResponse> {
+                request: near_sdk::serde_json::json!({
+                    "request": swap_request.clone(),
+                }),
                 response: None,
                 registers: HashMap::new(),
-                persistent_storage: &mut storage,
-                predecessor_id: near_sdk::env::predecessor_account_id(),
+                dex_storage: &mut self.dex_storage,
+                predecessor_id: trader.clone(),
+                dex_id: dex_id.clone(),
+                dex_storage_balances: &self.dex_storage_balances,
+                dex_storage_usage_before_transaction: storage_usage_before,
             },
         );
         let mut linker = Linker::new(&engine);
 
-        linker
-            .func_wrap(
-                "env",
-                "register_len",
-                |caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>, register_id: u64| {
-                    caller
-                        .data()
-                        .registers
-                        .get(&register_id)
-                        .map(|v| v.len() as u64)
-                        .unwrap_or(u64::MAX)
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "read_register",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 register_id: u64,
-                 ptr: u64| {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let buf = caller
-                        .data()
-                        .registers
-                        .get(&register_id)
-                        .expect("Invalid register")
-                        .clone();
-                    memory
-                        .write(&mut caller, ptr as usize, &buf)
-                        .expect("Failed to write data to guest memory");
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "write_register",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 register_id: u64,
-                 data_len: u64,
-                 data_ptr: u64| {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut buf = vec![0; data_len as usize];
-                    memory
-                        .read(&caller, data_ptr as usize, &mut buf)
-                        .expect("Failed to read data from guest memory");
-                    caller.data_mut().registers.insert(register_id, buf);
-                },
-            )
-            .expect("Failed to create host function");
-
-        linker
-            .func_wrap(
-                "env",
-                "input",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 register_id: u64| {
-                    let buf = near_sdk::serde_json::json!({
-                        "request": caller.data().request
-                    })
-                    .to_string()
-                    .into_bytes();
-                    caller.data_mut().registers.insert(register_id, buf);
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "attached_deposit",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 balance_ptr: u64| {
-                    let attached_deposit = NearToken::default().as_yoctonear(); // always 0
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    memory
-                        .write(
-                            &mut caller,
-                            balance_ptr as usize,
-                            &attached_deposit.to_le_bytes(),
-                        )
-                        .expect("Failed to write data to guest memory");
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "predecessor_account_id",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 register_id: u64| {
-                    let buf = caller.data().predecessor_id.to_string().into_bytes();
-                    caller.data_mut().registers.insert(register_id, buf);
-                },
-            )
-            .expect("Failed to create host function");
-
-        linker
-            .func_wrap(
-                "env",
-                "value_return",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 value_len: u64,
-                 value_ptr: u64| {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut buf = vec![0; value_len as usize];
-                    memory
-                        .read(&caller, value_ptr as usize, &mut buf)
-                        .expect("Failed to get return value");
-                    let swap_response: SwapResponse = near_sdk::serde_json::from_slice(&buf)
-                        .expect("Failed to parse return value as SwapResponse");
-                    caller.data_mut().response = Some(swap_response);
-                },
-            )
-            .expect("Failed to create host function");
-
-        linker
-            .func_wrap(
-                "env",
-                "panic",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>| {
-                    near_sdk::env::log_str("panicked");
-                    caller.data_mut().response = Some(SwapResponse::Error {
-                        message: "panicked".to_string(),
-                    });
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "panic_utf8",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 len: u64,
-                 ptr: u64| {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut buf = vec![0; len as usize];
-                    memory
-                        .read(&caller, ptr as usize, &mut buf)
-                        .expect("Failed to read panic message");
-                    let message = String::from_utf8(buf).expect("Failed to parse panic message");
-                    near_sdk::env::log_str(&format!("panicked: {message}"));
-                    caller.data_mut().response = Some(SwapResponse::Error { message });
-                },
-            )
-            .expect("Failed to create host function");
-
-        linker
-            .func_wrap(
-                "env",
-                "storage_write",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 key_len: u64,
-                 key_ptr: u64,
-                 value_len: u64,
-                 value_ptr: u64,
-                 register_id: u64|
-                 -> u64 {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut key_buf = vec![0; key_len as usize];
-                    memory
-                        .read(&caller, key_ptr as usize, &mut key_buf)
-                        .expect("Failed to read key from guest memory");
-                    let mut value_buf = vec![0; value_len as usize];
-                    memory
-                        .read(&caller, value_ptr as usize, &mut value_buf)
-                        .expect("Failed to read value from guest memory");
-                    let old_value = caller
-                        .data_mut()
-                        .persistent_storage
-                        .insert(key_buf, value_buf);
-
-                    if let Some(old_val) = old_value {
-                        caller.data_mut().registers.insert(register_id, old_val);
-                        1
-                    } else {
-                        0
-                    }
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "storage_read",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 key_len: u64,
-                 key_ptr: u64,
-                 register_id: u64|
-                 -> u64 {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut key_buf = vec![0; key_len as usize];
-                    memory
-                        .read(&caller, key_ptr as usize, &mut key_buf)
-                        .expect("Failed to read key from guest memory");
-
-                    if let Some(value) = caller.data().persistent_storage.get(&key_buf).cloned() {
-                        caller.data_mut().registers.insert(register_id, value);
-                        1
-                    } else {
-                        0
-                    }
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "storage_remove",
-                |mut caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 key_len: u64,
-                 key_ptr: u64,
-                 register_id: u64|
-                 -> u64 {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut key_buf = vec![0; key_len as usize];
-                    memory
-                        .read(&caller, key_ptr as usize, &mut key_buf)
-                        .expect("Failed to read key from guest memory");
-
-                    if let Some(old_value) = caller.data_mut().persistent_storage.remove(&key_buf) {
-                        caller.data_mut().registers.insert(register_id, old_value);
-                        1
-                    } else {
-                        0
-                    }
-                },
-            )
-            .expect("Failed to create host function");
-        linker
-            .func_wrap(
-                "env",
-                "storage_has_key",
-                |caller: Caller<'_, RunnerData<SwapRequest, SwapResponse>>,
-                 key_len: u64,
-                 key_ptr: u64|
-                 -> u64 {
-                    let memory = caller
-                        .get_export("memory")
-                        .and_then(|m| m.into_memory())
-                        .expect("Failed to get memory");
-                    let mut key_buf = vec![0; key_len as usize];
-                    memory
-                        .read(&caller, key_ptr as usize, &mut key_buf)
-                        .expect("Failed to read key from guest memory");
-
-                    if caller.data().persistent_storage.contains_key(&key_buf) {
-                        1
-                    } else {
-                        0
-                    }
-                },
-            )
-            .expect("Failed to create host function");
-
-        declare_unimplemented_host_functions! {
-            linker:
-
-            // ###############
-            // # Context API #
-            // ###############
-            pub fn current_account_id(register_id: u64);
-            pub fn current_contract_code(register_id: u64) -> u64;
-            pub fn refund_to_account_id(register_id: u64);
-            pub fn signer_account_id(register_id: u64);
-            pub fn signer_account_pk(register_id: u64);
-            pub fn block_index() -> u64;
-            pub fn block_timestamp() -> u64;
-            pub fn epoch_height() -> u64;
-            pub fn storage_usage() -> u64;
-            // #################
-            // # Economics API #
-            // #################
-            pub fn account_balance(balance_ptr: u64);
-            pub fn account_locked_balance(balance_ptr: u64);
-            pub fn prepaid_gas() -> u64;
-            pub fn used_gas() -> u64;
-            // ############
-            // # Math API #
-            // ############
-            pub fn random_seed(register_id: u64);
-            pub fn sha256(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn keccak256(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn keccak512(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn ripemd160(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn ecrecover(
-                hash_len: u64,
-                hash_ptr: u64,
-                sig_len: u64,
-                sig_ptr: u64,
-                v: u64,
-                malleability_flag: u64,
-                register_id: u64,
-            ) -> u64;
-            pub fn ed25519_verify(
-                sig_len: u64,
-                sig_ptr: u64,
-                msg_len: u64,
-                msg_ptr: u64,
-                pub_key_len: u64,
-                pub_key_ptr: u64,
-            ) -> u64;
-            // #####################
-            // # Miscellaneous API #
-            // #####################
-            pub fn log_utf8(len: u64, ptr: u64);
-            pub fn log_utf16(len: u64, ptr: u64);
-            pub fn abort(msg_ptr: u32, filename_ptr: u32, line: u32, col: u32) -> !;
-            // ################
-            // # Promises API #
-            // ################
-            pub fn promise_create(
-                account_id_len: u64,
-                account_id_ptr: u64,
-                function_name_len: u64,
-                function_name_ptr: u64,
-                arguments_len: u64,
-                arguments_ptr: u64,
-                amount_ptr: u64,
-                gas: u64,
-            ) -> u64;
-            pub fn promise_then(
-                promise_index: u64,
-                account_id_len: u64,
-                account_id_ptr: u64,
-                function_name_len: u64,
-                function_name_ptr: u64,
-                arguments_len: u64,
-                arguments_ptr: u64,
-                amount_ptr: u64,
-                gas: u64,
-            ) -> u64;
-            pub fn promise_and(promise_idx_ptr: u64, promise_idx_count: u64) -> u64;
-            pub fn promise_batch_create(account_id_len: u64, account_id_ptr: u64) -> u64;
-            pub fn promise_batch_then(promise_index: u64, account_id_len: u64, account_id_ptr: u64) -> u64;
-            // #######################
-            // # Promise API actions #
-            // #######################
-            pub fn promise_set_refund_to(promise_index: u64, account_id_len: u64, account_id_ptr: u64);
-            pub fn promise_batch_action_state_init(
-                promise_index: u64,
-                code_len: u64,
-                code_ptr: u64,
-                amount_ptr: u64,
-            ) -> u64;
-            pub fn promise_batch_action_state_init_by_account_id(
-                promise_index: u64,
-                account_id_len: u64,
-                account_id_ptr: u64,
-                amount_ptr: u64,
-            ) -> u64;
-            pub fn set_state_init_data_entry(
-                promise_index: u64,
-                action_index: u64,
-                key_len: u64,
-                key_ptr: u64,
-                value_len: u64,
-                value_ptr: u64,
-            );
-            pub fn promise_batch_action_create_account(promise_index: u64);
-            pub fn promise_batch_action_deploy_contract(promise_index: u64, code_len: u64, code_ptr: u64);
-            pub fn promise_batch_action_function_call(
-                promise_index: u64,
-                function_name_len: u64,
-                function_name_ptr: u64,
-                arguments_len: u64,
-                arguments_ptr: u64,
-                amount_ptr: u64,
-                gas: u64,
-            );
-            pub fn promise_batch_action_function_call_weight(
-                promise_index: u64,
-                function_name_len: u64,
-                function_name_ptr: u64,
-                arguments_len: u64,
-                arguments_ptr: u64,
-                amount_ptr: u64,
-                gas: u64,
-                weight: u64,
-            );
-            pub fn promise_batch_action_transfer(promise_index: u64, amount_ptr: u64);
-            pub fn promise_batch_action_stake(
-                promise_index: u64,
-                amount_ptr: u64,
-                public_key_len: u64,
-                public_key_ptr: u64,
-            );
-            pub fn promise_batch_action_add_key_with_full_access(
-                promise_index: u64,
-                public_key_len: u64,
-                public_key_ptr: u64,
-                nonce: u64,
-            );
-            pub fn promise_batch_action_add_key_with_function_call(
-                promise_index: u64,
-                public_key_len: u64,
-                public_key_ptr: u64,
-                nonce: u64,
-                allowance_ptr: u64,
-                receiver_id_len: u64,
-                receiver_id_ptr: u64,
-                function_names_len: u64,
-                function_names_ptr: u64,
-            );
-            pub fn promise_batch_action_delete_key(
-                promise_index: u64,
-                public_key_len: u64,
-                public_key_ptr: u64,
-            );
-            pub fn promise_batch_action_delete_account(
-                promise_index: u64,
-                beneficiary_id_len: u64,
-                beneficiary_id_ptr: u64,
-            );
-            // #########################
-            // # Global Contract API   #
-            // #########################
-            pub fn promise_batch_action_deploy_global_contract(
-                promise_index: u64,
-                code_len: u64,
-                code_ptr: u64,
-            );
-            pub fn promise_batch_action_deploy_global_contract_by_account_id(
-                promise_index: u64,
-                code_len: u64,
-                code_ptr: u64,
-            );
-            pub fn promise_batch_action_use_global_contract(
-                promise_index: u64,
-                code_hash_len: u64,
-                code_hash_ptr: u64,
-            );
-            pub fn promise_batch_action_use_global_contract_by_account_id(
-                promise_index: u64,
-                account_id_len: u64,
-                account_id_ptr: u64,
-            );
-            pub fn promise_yield_create(
-                function_name_len: u64,
-                function_name_ptr: u64,
-                arguments_len: u64,
-                arguments_ptr: u64,
-                gas: u64,
-                gas_weight: u64,
-                register_id: u64,
-            ) -> u64;
-            pub fn promise_yield_resume(
-                data_id_len: u64,
-                data_id_ptr: u64,
-                payload_len: u64,
-                payload_ptr: u64,
-            ) -> u32;
-            // #######################
-            // # Promise API results #
-            // #######################
-            pub fn promise_results_count() -> u64;
-            pub fn promise_result(result_idx: u64, register_id: u64) -> u64;
-            pub fn promise_return(promise_id: u64);
-            // ###############
-            // # Storage API #
-            // ###############
-            pub fn storage_iter_prefix(prefix_len: u64, prefix_ptr: u64) -> u64;
-            pub fn storage_iter_range(start_len: u64, start_ptr: u64, end_len: u64, end_ptr: u64) -> u64;
-            pub fn storage_iter_next(iterator_id: u64, key_register_id: u64, value_register_id: u64)
-                -> u64;
-            // ###############
-            // # Validator API #
-            // ###############
-            pub fn validator_stake(account_id_len: u64, account_id_ptr: u64, stake_ptr: u64);
-            pub fn validator_total_stake(stake_ptr: u64);
-            // #############
-            // # Alt BN128 #
-            // #############
-            pub fn alt_bn128_g1_multiexp(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn alt_bn128_g1_sum(value_len: u64, value_ptr: u64, register_id: u64);
-            pub fn alt_bn128_pairing_check(value_len: u64, value_ptr: u64) -> u64;
-
-            // #############
-            // # BLS12-381 #
-            // #############
-            pub fn bls12381_p1_sum(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_p2_sum(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_g1_multiexp(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_g2_multiexp(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_map_fp_to_g1(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_map_fp2_to_g2(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_pairing_check(value_len: u64, value_ptr: u64) -> u64;
-            pub fn bls12381_p1_decompress(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-            pub fn bls12381_p2_decompress(value_len: u64, value_ptr: u64, register_id: u64) -> u64;
-        }
+        impl_supported_host_functions!(linker);
+        impl_unsupported_host_functions!(linker);
 
         let instance = match linker.instantiate_and_start(&mut store, &module) {
             Ok(i) => i,
@@ -644,15 +223,212 @@ impl SandboxedDexEngine {
             Ok(()) => (),
             Err(err) => panic!("Failed to call function: {err:?}"),
         };
+        let response = store.data_mut().response.take();
+        drop(store);
+        drop(linker);
 
-        match &store.data().response {
-            // TODO subtract amount_out from dex balance, add amount_in to dex balance, send amount_out to the trader
-            Some(SwapResponse::Ok {
-                amount_in: _,
+        self.dex_storage.flush();
+        let storage_usage_after = near_sdk::env::storage_usage();
+        self.dex_storage_balances
+            .charge(&dex_id, storage_usage_before, storage_usage_after);
+
+        match &response {
+            Some(SwapResponse {
+                amount_in,
                 amount_out,
-            }) => *amount_out,
-            Some(SwapResponse::Error { message }) => panic!("Error returned from wasm: {message}"),
+            }) => {
+                match swap_request.amount {
+                    SwapRequestAmount::ExactIn(exact_in) => {
+                        assert!(exact_in == *amount_in, "Amount in does not match");
+                    }
+                    SwapRequestAmount::ExactOut(exact_out) => {
+                        assert!(exact_out == *amount_out, "Amount out does not match");
+                    }
+                }
+
+                self.transfer_assets(
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    AccountOrDexId::Account(trader.clone()),
+                    swap_request.asset_out.clone(),
+                    *amount_out,
+                );
+                self.transfer_assets(
+                    AccountOrDexId::Account(trader.clone()),
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    swap_request.asset_in.clone(),
+                    *amount_in,
+                );
+
+                IntearDexEvent::SwapStep {
+                    dex_id: dex_id.clone(),
+                    request: swap_request.clone(),
+                    amount_in: *amount_in,
+                    amount_out: *amount_out,
+                    trader: trader.clone(),
+                }
+                .emit();
+
+                (*amount_in, *amount_out)
+            }
             None => panic!("No response from swap"),
+        }
+    }
+
+    /// An arbitrary call to a dex method. Can be used for
+    /// operations such as adding liquidity, removing liquidity,
+    /// oracle updates, manual curve / strategy updates by the
+    /// developer, etc.
+    #[payable]
+    pub fn dex_call(
+        &mut self,
+        dex_id: DexId,
+        method: String,
+        #[allow(unused_mut)] mut args: near_sdk::serde_json::Value,
+        attached_assets: HashMap<AssetId, U128>,
+    ) -> near_sdk::serde_json::Value {
+        near_sdk::assert_one_yocto();
+        assert!(
+            method != "swap",
+            "Method name 'swap' is reserved for the swap operation"
+        );
+
+        let predecessor = near_sdk::env::predecessor_account_id();
+        for (asset_id, amount) in attached_assets.clone() {
+            self.assert_has_enough(
+                AccountOrDexId::Account(predecessor.clone()),
+                asset_id.clone(),
+                amount,
+            );
+        }
+
+        let code = self.dex_codes.get(&dex_id).expect("Dex code not found");
+        let engine = Engine::default();
+        let module = match Module::new(&engine, code) {
+            Ok(module) => module,
+            Err(err) => panic!("Failed to load module: {err:?}"),
+        };
+
+        let storage_usage_before = near_sdk::env::storage_usage();
+        let Some(args_object) = args.as_object_mut() else {
+            panic!("Args must be an object");
+        };
+        assert!(
+            args_object
+                .insert(
+                    "attached_assets".to_string(),
+                    near_sdk::serde_json::json!(attached_assets)
+                )
+                .is_none(),
+            "Args must contain 'attached_assets' field"
+        );
+        let mut store = Store::new(
+            &engine,
+            RunnerData::<DexCallResponse> {
+                request: args,
+                response: None,
+                registers: HashMap::new(),
+                dex_storage: &mut self.dex_storage,
+                predecessor_id: predecessor.clone(),
+                dex_id: dex_id.clone(),
+                dex_storage_balances: &self.dex_storage_balances,
+                dex_storage_usage_before_transaction: storage_usage_before,
+            },
+        );
+        let mut linker = Linker::new(&engine);
+
+        impl_supported_host_functions!(linker);
+        impl_unsupported_host_functions!(linker);
+
+        let instance = match linker.instantiate_and_start(&mut store, &module) {
+            Ok(i) => i,
+            Err(err) => panic!("Failed to instantiate module: {err:?}"),
+        };
+        let dex_call_func: Func = match instance.get_func(&mut store, method.as_str()) {
+            Some(f) => f,
+            None => panic!("Failed to get function"),
+        };
+        match dex_call_func.call(&mut store, &[], &mut []) {
+            Ok(()) => (),
+            Err(err) => panic!("Failed to call function: {err:?}"),
+        };
+        let response = store.data_mut().response.take();
+        drop(store);
+        drop(linker);
+
+        self.dex_storage.flush();
+        let storage_usage_after = near_sdk::env::storage_usage();
+        self.dex_storage_balances
+            .charge(&dex_id, storage_usage_before, storage_usage_after);
+
+        match &response {
+            Some(DexCallResponse {
+                asset_withdraw_requests,
+                add_storage_deposit,
+                response,
+            }) => {
+                for (asset_id, amount) in attached_assets {
+                    self.transfer_assets(
+                        AccountOrDexId::Account(predecessor.clone()),
+                        AccountOrDexId::Dex(dex_id.clone()),
+                        asset_id.clone(),
+                        amount,
+                    );
+                }
+
+                for AssetWithdrawRequest {
+                    asset_id,
+                    amount,
+                    withdrawal_type,
+                } in asset_withdraw_requests
+                {
+                    match withdrawal_type {
+                        AssetWithdrawalType::ToInternalUserBalance(account) => {
+                            let storage_usage_before = near_sdk::env::storage_usage();
+                            self.transfer_assets(
+                                AccountOrDexId::Dex(dex_id.clone()),
+                                AccountOrDexId::Account(account.clone()),
+                                asset_id.clone(),
+                                *amount,
+                            );
+                            let storage_usage_after = near_sdk::env::storage_usage();
+                            self.user_storage_balances.charge(
+                                account,
+                                storage_usage_before,
+                                storage_usage_after,
+                            );
+                        }
+                        AssetWithdrawalType::ToInternalDexBalance(other_dex_id) => {
+                            self.transfer_assets(
+                                AccountOrDexId::Dex(dex_id.clone()),
+                                AccountOrDexId::Dex(other_dex_id.clone()),
+                                asset_id.clone(),
+                                *amount,
+                            );
+                        }
+                        AssetWithdrawalType::WithdrawUnderlyingAsset(_) => {
+                            unimplemented!()
+                        }
+                        AssetWithdrawalType::WithdrawUnderlyingAssetAndCall {
+                            recipient_id: _,
+                            message: _,
+                        } => {
+                            unimplemented!()
+                        }
+                    }
+                }
+
+                if !add_storage_deposit.is_zero() {
+                    self.withdraw_assets(
+                        AccountOrDexId::Dex(dex_id.clone()),
+                        AssetId::Near,
+                        U128(add_storage_deposit.as_yoctonear()),
+                    );
+                    self.dex_storage_balances
+                        .deposit(&dex_id, *add_storage_deposit);
+                }
+                response.clone()
+            }
+            None => panic!("No response from dex call"),
         }
     }
 }
