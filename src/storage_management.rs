@@ -1,3 +1,4 @@
+use intear_dex_types::DexId;
 use near_contract_standards::storage_management::{
     StorageBalance, StorageBalanceBounds, StorageManagement,
 };
@@ -7,7 +8,6 @@ use near_sdk::{
     near,
     store::LookupMap,
 };
-use tear_sdk::DexId;
 
 use crate::{DexEngine, DexEngineExt};
 
@@ -47,6 +47,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
     pub fn deposit(&mut self, account_id: &K, amount: NearToken) {
         let b = self.storage_balances.entry(account_id.clone()).or_default();
         b.total = b.total.saturating_add(amount);
+        self.storage_balances.flush();
     }
 
     pub fn charge(&mut self, account_id: &K, storage_usage_before: u64, storage_usage_after: u64) {
@@ -63,6 +64,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
                 if b.used > b.total {
                     panic!("Storage used ({}) exceeds total ({})", b.used, b.total);
                 }
+                self.storage_balances.flush();
             }
             std::cmp::Ordering::Less => {
                 // refund the difference
@@ -73,6 +75,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
                     .used
                     .checked_sub(storage_cost)
                     .expect("Storage cost underflow");
+                self.storage_balances.flush();
             }
             std::cmp::Ordering::Equal => {
                 // nothing changed

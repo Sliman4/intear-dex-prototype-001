@@ -796,8 +796,8 @@ dependencies = [
 name = "example-dex"
 version = "0.1.0"
 dependencies = [
+ "intear-dex-types",
  "near-sdk",
- "tear-sdk",
  "uint 0.10.0",
 ]
 
@@ -1382,13 +1382,20 @@ dependencies = [
 name = "intear-dex"
 version = "0.1.0"
 dependencies = [
+ "intear-dex-types",
  "near-contract-standards",
  "near-sdk",
  "near-workspaces",
  "serde_json",
- "tear-sdk",
  "tokio",
  "wasmi",
+]
+
+[[package]]
+name = "intear-dex-types"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
 ]
 
 [[package]]
@@ -1517,7 +1524,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -3033,6 +3040,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
 
 [[package]]
+name = "smallest-possible-dex"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "intear-dex-types",
+ "spin 0.10.0",
+ "talc",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3064,6 +3081,15 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "stable_deref_trait"
@@ -3194,6 +3220,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "talc"
+version = "4.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3ae828aa394de34c7de08f522d1b86bd1c182c668d27da69caadda00590f26d"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3208,13 +3243,6 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
-]
-
-[[package]]
-name = "tear-sdk"
-version = "0.1.0"
-dependencies = [
- "near-sdk",
 ]
 
 [[package]]
@@ -3725,7 +3753,7 @@ version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "028dc313c1e210ebbacabb51c6a5bc5183e4d4bdb7fbebe31d87e6de6ff46874"
 dependencies = [
- "spin",
+ "spin 0.9.8",
  "wasmi_collections",
  "wasmi_core",
  "wasmi_ir",

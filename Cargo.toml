@@ -1,5 +1,5 @@
 [workspace]
-members = ["example-dex", "tear-sdk"]
+members = ["example-dex", "smallest-possible-dex", "intear-dex-types"]
 
 [package]
 name = "intear-dex"
@@ -24,9 +24,9 @@ container_build_command = [
 ]
 
 [dependencies]
-near-sdk = { version = "5.23", features = ["unstable"] }
+near-sdk = { version = "5.23", default-features = false, features = ["unstable"] }
 wasmi = { version = "1.0.4", default-features = false }
-tear-sdk = { path = "./tear-sdk" }
+intear-dex-types = { path = "./intear-dex-types", features = ["json"] }
 near-contract-standards = "5.23"
 
 [dev-dependencies]

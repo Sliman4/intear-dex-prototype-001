@@ -1,23 +1,22 @@
-mod asset_deposit;
-mod host_functions;
-mod internal_asset_operations;
-mod storage_management;
+pub mod asset_deposit;
+pub mod host_functions;
+pub mod internal_asset_operations;
+pub mod storage_management;
 
 use std::collections::HashMap;
 
+use crate::{internal_asset_operations::AccountOrDexId, storage_management::StorageBalances};
+use intear_dex_types::{
+    AssetId, AssetWithdrawRequest, AssetWithdrawalType, DexCallRequest, DexCallResponse, DexId,
+    SwapRequest, SwapRequestAmount, SwapResponse, expect,
+};
 use near_sdk::{
     AccountId, BorshStorageKey,
     json_types::{Base58CryptoHash, Base64VecU8, U128},
     near,
     store::{IterableMap, LookupMap},
 };
-use tear_sdk::{
-    AssetId, AssetWithdrawRequest, AssetWithdrawalType, DexCallResponse, DexId, SwapRequest,
-    SwapRequestAmount, SwapResponse,
-};
 use wasmi::{Caller, Engine, Func, Linker, Module, Store};
-
-use crate::{internal_asset_operations::AccountOrDexId, storage_management::StorageBalances};
 
 #[near(contract_state)]
 pub struct DexEngine {
@@ -119,16 +118,16 @@ pub enum IntearDexEvent {
     #[event_version("1.0.0")]
     SwapStep {
         dex_id: DexId,
-        request: SwapRequest,
+        // request: SwapRequest,
         amount_in: U128,
         amount_out: U128,
         trader: AccountId,
     },
 }
 
-struct RunnerData<'a, Response> {
-    request: near_sdk::serde_json::Value,
-    response: Option<Response>,
+pub struct RunnerData<'a> {
+    request: Vec<u8>,
+    response: Option<Vec<u8>>,
     registers: HashMap<u64, Vec<u8>>,
     dex_storage: &'a mut LookupMap<(DexId, Vec<u8>), Vec<u8>>,
     predecessor_id: AccountId,
@@ -164,11 +163,12 @@ impl DexEngine {
     }
 
     /// Swap one asset for another on a specific dex.
+    /// Multi-step aggregator method coming soon.
     #[payable]
     pub fn swap_one_dex(
         &mut self,
         dex_id: DexId,
-        message: String,
+        message: Base64VecU8,
         asset_in: AssetId,
         asset_out: AssetId,
         amount: SwapRequestAmount,
@@ -176,7 +176,7 @@ impl DexEngine {
         near_sdk::assert_one_yocto();
 
         let swap_request = SwapRequest {
-            message,
+            message: message.0,
             asset_in,
             asset_out,
             amount,
@@ -193,10 +193,9 @@ impl DexEngine {
         let storage_usage_before = near_sdk::env::storage_usage();
         let mut store = Store::new(
             &engine,
-            RunnerData::<SwapResponse> {
-                request: near_sdk::serde_json::json!({
-                    "request": swap_request.clone(),
-                }),
+            RunnerData {
+                request: near_sdk::borsh::to_vec(&swap_request)
+                    .expect("Failed to serialize swap request"),
                 response: None,
                 registers: HashMap::new(),
                 dex_storage: &mut self.dex_storage,
@@ -232,46 +231,47 @@ impl DexEngine {
         self.dex_storage_balances
             .charge(&dex_id, storage_usage_before, storage_usage_after);
 
-        match &response {
-            Some(SwapResponse {
-                amount_in,
-                amount_out,
-            }) => {
-                match swap_request.amount {
-                    SwapRequestAmount::ExactIn(exact_in) => {
-                        assert!(exact_in == *amount_in, "Amount in does not match");
-                    }
-                    SwapRequestAmount::ExactOut(exact_out) => {
-                        assert!(exact_out == *amount_out, "Amount out does not match");
-                    }
-                }
-
-                self.transfer_assets(
-                    AccountOrDexId::Dex(dex_id.clone()),
-                    AccountOrDexId::Account(trader.clone()),
-                    swap_request.asset_out.clone(),
-                    *amount_out,
-                );
-                self.transfer_assets(
-                    AccountOrDexId::Account(trader.clone()),
-                    AccountOrDexId::Dex(dex_id.clone()),
-                    swap_request.asset_in.clone(),
-                    *amount_in,
-                );
-
-                IntearDexEvent::SwapStep {
-                    dex_id: dex_id.clone(),
-                    request: swap_request.clone(),
-                    amount_in: *amount_in,
-                    amount_out: *amount_out,
-                    trader: trader.clone(),
-                }
-                .emit();
-
-                (*amount_in, *amount_out)
+        let response: SwapResponse = match response {
+            Some(response) => {
+                near_sdk::borsh::from_slice(&response).expect("Failed to deserialize swap response")
             }
             None => panic!("No response from swap"),
+        };
+        match swap_request.amount {
+            SwapRequestAmount::ExactIn(exact_in) => {
+                expect!(exact_in == response.amount_in, "Amount in does not match");
+            }
+            SwapRequestAmount::ExactOut(exact_out) => {
+                expect!(
+                    exact_out == response.amount_out,
+                    "Amount out does not match"
+                );
+            }
         }
+
+        self.transfer_assets(
+            AccountOrDexId::Account(trader.clone()),
+            AccountOrDexId::Dex(dex_id.clone()),
+            swap_request.asset_in.clone(),
+            response.amount_in,
+        );
+        self.transfer_assets(
+            AccountOrDexId::Dex(dex_id.clone()),
+            AccountOrDexId::Account(trader.clone()),
+            swap_request.asset_out.clone(),
+            response.amount_out,
+        );
+
+        IntearDexEvent::SwapStep {
+            dex_id: dex_id.clone(),
+            // request: swap_request.clone(),
+            amount_in: response.amount_in,
+            amount_out: response.amount_out,
+            trader: trader.clone(),
+        }
+        .emit();
+
+        (response.amount_in, response.amount_out)
     }
 
     /// An arbitrary call to a dex method. Can be used for
@@ -283,11 +283,12 @@ impl DexEngine {
         &mut self,
         dex_id: DexId,
         method: String,
-        #[allow(unused_mut)] mut args: near_sdk::serde_json::Value,
+        args: Base64VecU8,
         attached_assets: HashMap<AssetId, U128>,
-    ) -> near_sdk::serde_json::Value {
+    ) -> Base64VecU8 {
+        near_sdk::env::log_str(&format!("storage 0: {}", near_sdk::env::storage_usage()));
         near_sdk::assert_one_yocto();
-        assert!(
+        expect!(
             method != "swap",
             "Method name 'swap' is reserved for the swap operation"
         );
@@ -309,22 +310,14 @@ impl DexEngine {
         };
 
         let storage_usage_before = near_sdk::env::storage_usage();
-        let Some(args_object) = args.as_object_mut() else {
-            panic!("Args must be an object");
+        let request = DexCallRequest {
+            args: args.0,
+            attached_assets,
         };
-        assert!(
-            args_object
-                .insert(
-                    "attached_assets".to_string(),
-                    near_sdk::serde_json::json!(attached_assets)
-                )
-                .is_none(),
-            "Args must contain 'attached_assets' field"
-        );
         let mut store = Store::new(
             &engine,
-            RunnerData::<DexCallResponse> {
-                request: args,
+            RunnerData {
+                request: near_sdk::borsh::to_vec(&request).expect("Failed to serialize request"),
                 response: None,
                 registers: HashMap::new(),
                 dex_storage: &mut self.dex_storage,
@@ -347,6 +340,7 @@ impl DexEngine {
             Some(f) => f,
             None => panic!("Failed to get function"),
         };
+        near_sdk::env::log_str(&format!("storage 1: {}", near_sdk::env::storage_usage()));
         match dex_call_func.call(&mut store, &[], &mut []) {
             Ok(()) => (),
             Err(err) => panic!("Failed to call function: {err:?}"),
@@ -355,80 +349,135 @@ impl DexEngine {
         drop(store);
         drop(linker);
 
+        near_sdk::env::log_str(&format!("storage 1.5: {}", near_sdk::env::storage_usage()));
         self.dex_storage.flush();
+        near_sdk::env::log_str(&format!("storage 2: {}", near_sdk::env::storage_usage()));
         let storage_usage_after = near_sdk::env::storage_usage();
         self.dex_storage_balances
             .charge(&dex_id, storage_usage_before, storage_usage_after);
 
-        match &response {
-            Some(DexCallResponse {
-                asset_withdraw_requests,
-                add_storage_deposit,
-                response,
-            }) => {
-                for (asset_id, amount) in attached_assets {
+        let response: DexCallResponse = match response {
+            Some(response) => near_sdk::borsh::from_slice(&response)
+                .expect("Failed to deserialize dex call response"),
+            None => Default::default(),
+        };
+        for (asset_id, amount) in request.attached_assets {
+            self.transfer_assets(
+                AccountOrDexId::Account(predecessor.clone()),
+                AccountOrDexId::Dex(dex_id.clone()),
+                asset_id.clone(),
+                amount,
+            );
+        }
+
+        for AssetWithdrawRequest {
+            asset_id,
+            amount,
+            withdrawal_type,
+        } in response.asset_withdraw_requests
+        {
+            match withdrawal_type {
+                AssetWithdrawalType::ToInternalUserBalance(account) => {
+                    let storage_usage_before = near_sdk::env::storage_usage();
                     self.transfer_assets(
-                        AccountOrDexId::Account(predecessor.clone()),
                         AccountOrDexId::Dex(dex_id.clone()),
+                        AccountOrDexId::Account(account.clone()),
+                        asset_id.clone(),
+                        amount,
+                    );
+                    let storage_usage_after = near_sdk::env::storage_usage();
+                    self.user_storage_balances.charge(
+                        &account,
+                        storage_usage_before,
+                        storage_usage_after,
+                    );
+                }
+                AssetWithdrawalType::ToInternalDexBalance(other_dex_id) => {
+                    self.transfer_assets(
+                        AccountOrDexId::Dex(dex_id.clone()),
+                        AccountOrDexId::Dex(other_dex_id.clone()),
                         asset_id.clone(),
                         amount,
                     );
                 }
-
-                for AssetWithdrawRequest {
-                    asset_id,
-                    amount,
-                    withdrawal_type,
-                } in asset_withdraw_requests
-                {
-                    match withdrawal_type {
-                        AssetWithdrawalType::ToInternalUserBalance(account) => {
-                            let storage_usage_before = near_sdk::env::storage_usage();
-                            self.transfer_assets(
-                                AccountOrDexId::Dex(dex_id.clone()),
-                                AccountOrDexId::Account(account.clone()),
-                                asset_id.clone(),
-                                *amount,
-                            );
-                            let storage_usage_after = near_sdk::env::storage_usage();
-                            self.user_storage_balances.charge(
-                                account,
-                                storage_usage_before,
-                                storage_usage_after,
-                            );
-                        }
-                        AssetWithdrawalType::ToInternalDexBalance(other_dex_id) => {
-                            self.transfer_assets(
-                                AccountOrDexId::Dex(dex_id.clone()),
-                                AccountOrDexId::Dex(other_dex_id.clone()),
-                                asset_id.clone(),
-                                *amount,
-                            );
-                        }
-                        AssetWithdrawalType::WithdrawUnderlyingAsset(_) => {
-                            unimplemented!()
-                        }
-                        AssetWithdrawalType::WithdrawUnderlyingAssetAndCall {
-                            recipient_id: _,
-                            message: _,
-                        } => {
-                            unimplemented!()
-                        }
-                    }
+                AssetWithdrawalType::WithdrawUnderlyingAsset(_) => {
+                    unimplemented!()
                 }
-
-                if !add_storage_deposit.is_zero() {
-                    self.withdraw_assets(
-                        AccountOrDexId::Dex(dex_id.clone()),
-                        AssetId::Near,
-                        U128(add_storage_deposit.as_yoctonear()),
-                    );
-                    self.dex_storage_balances
-                        .deposit(&dex_id, *add_storage_deposit);
+                AssetWithdrawalType::WithdrawUnderlyingAssetAndCall {
+                    recipient_id: _,
+                    message: _,
+                } => {
+                    unimplemented!()
                 }
-                response.clone()
             }
-            None => panic!("No response from dex call"),
         }
+
+        if !response.add_storage_deposit.is_zero() {
+            self.withdraw_assets(
+                AccountOrDexId::Dex(dex_id.clone()),
+                AssetId::Near,
+                U128(response.add_storage_deposit.as_yoctonear()),
+            );
+            self.dex_storage_balances
+                .deposit(&dex_id, response.add_storage_deposit);
+        }
+        near_sdk::env::log_str(&format!("storage 8: {}", near_sdk::env::storage_usage()));
+        // self.dex_storage.flush();
+        // self.contract_tracked_balance.flush();
+        self.dex_balances.flush();
+        // self.user_balances.flush();
+        near_sdk::env::log_str(&format!("storage 9: {}", near_sdk::env::storage_usage()));
+        Base64VecU8::from(response.response)
+    }
+
+    #[payable]
+    pub fn transfer_personal_assets(
+        &mut self,
+        to: AccountOrDexId,
+        asset_id: AssetId,
+        amount: U128,
+    ) {
+        near_sdk::assert_one_yocto();
+        self.transfer_assets(
+            AccountOrDexId::Account(near_sdk::env::predecessor_account_id()),
+            to,
+            asset_id,
+            amount,
+        );
+    }
+
+    pub fn asset_balance_of(&self, of: AccountOrDexId, asset_id: AssetId) -> Option<U128> {
+        match of {
+            AccountOrDexId::Account(account) => {
+                self.user_balances.get(&(account, asset_id)).copied()
+            }
+            AccountOrDexId::Dex(dex_id) => self.dex_balances.get(&(dex_id, asset_id)).copied(),
+        }
+    }
+
+    #[payable]
+    pub fn register_assets(&mut self, asset_ids: Vec<AssetId>, r#for: Option<AccountOrDexId>) {
+        near_sdk::assert_one_yocto();
+        let r#for = r#for
+            .unwrap_or_else(|| AccountOrDexId::Account(near_sdk::env::predecessor_account_id()));
+        let storage_usage_before = near_sdk::env::storage_usage();
+        for asset_id in asset_ids {
+            match r#for.clone() {
+                AccountOrDexId::Account(account) => {
+                    self.user_balances.insert((account, asset_id), U128(0));
+                }
+                AccountOrDexId::Dex(dex_id) => {
+                    self.dex_balances.insert((dex_id, asset_id), U128(0));
+                }
+            }
+        }
+        self.user_balances.flush();
+        self.dex_balances.flush();
+        let storage_usage_after = near_sdk::env::storage_usage();
+        self.user_storage_balances.charge(
+            &near_sdk::env::predecessor_account_id(),
+            storage_usage_before,
+            storage_usage_after,
+        );
     }
 }

@@ -1,19 +1,17 @@
-use std::{fmt::Display, str::FromStr};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
-use near_sdk::{
-    AccountId, NearToken,
-    json_types::U128,
-    near,
-    serde::{Deserialize, Deserializer, Serialize, Serializer},
-};
+#[cfg(feature = "json")]
+use near_sdk::serde::{Deserialize, Deserializer, Serialize, Serializer};
+use near_sdk::{AccountId, NearToken, json_types::U128, near};
 
 /// Request for a swap operation.
 #[derive(Clone, Debug)]
-#[near(serializers=[json])]
+#[cfg_attr(not(feature = "json"), near(serializers=[borsh]))]
+#[cfg_attr(feature = "json", near(serializers=[borsh, json]))]
 pub struct SwapRequest {
     /// Custom message to be passed to the dex. For example,
     /// it could be the pool ID or route.
-    pub message: String,
+    pub message: Vec<u8>,
     /// The asset the user has requested to be swapped in.
     pub asset_in: AssetId,
     /// The asset the user has requested to be swapped out.
@@ -30,22 +28,29 @@ pub struct SwapRequest {
 /// To mark operation as unsuccessful and refund the attached
 /// assets to the user, the dex must panic.
 #[derive(Clone, Debug)]
-#[near(serializers=[json])]
+#[near(serializers=[borsh])]
 pub struct SwapResponse {
     pub amount_in: U128,
     pub amount_out: U128,
 }
 
 #[derive(Clone, Debug)]
-#[near(serializers=[json])]
+#[near(serializers=[borsh])]
+pub struct DexCallRequest {
+    pub attached_assets: HashMap<AssetId, U128>,
+    pub args: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Default)]
+#[near(serializers=[borsh])]
 pub struct DexCallResponse {
     pub asset_withdraw_requests: Vec<AssetWithdrawRequest>,
     pub add_storage_deposit: NearToken,
-    pub response: near_sdk::serde_json::Value,
+    pub response: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
-#[near(serializers=[json])]
+#[near(serializers=[borsh])]
 pub struct AssetWithdrawRequest {
     pub asset_id: AssetId,
     pub amount: U128,
@@ -53,7 +58,7 @@ pub struct AssetWithdrawRequest {
 }
 
 #[derive(Clone, Debug)]
-#[near(serializers=[json])]
+#[near(serializers=[borsh])]
 pub enum AssetWithdrawalType {
     ToInternalUserBalance(AccountId),
     ToInternalDexBalance(DexId),
@@ -125,6 +130,7 @@ impl FromStr for AssetId {
     }
 }
 
+#[cfg(feature = "json")]
 impl Serialize for AssetId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -134,6 +140,7 @@ impl Serialize for AssetId {
     }
 }
 
+#[cfg(feature = "json")]
 impl<'de> Deserialize<'de> for AssetId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -144,7 +151,7 @@ impl<'de> Deserialize<'de> for AssetId {
     }
 }
 
-#[cfg(feature = "abi")]
+#[cfg(all(feature = "abi", feature = "json"))]
 impl near_sdk::schemars::JsonSchema for AssetId {
     fn schema_name() -> String {
         "AssetId".to_string()
@@ -157,7 +164,8 @@ impl near_sdk::schemars::JsonSchema for AssetId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[near(serializers=[json])]
+#[cfg_attr(not(feature = "json"), near(serializers=[borsh]))]
+#[cfg_attr(feature = "json", near(serializers=[borsh, json]))]
 pub enum SwapRequestAmount {
     ExactIn(U128),
     ExactOut(U128),
@@ -189,6 +197,7 @@ impl FromStr for DexId {
     }
 }
 
+#[cfg(feature = "json")]
 impl Serialize for DexId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -198,6 +207,7 @@ impl Serialize for DexId {
     }
 }
 
+#[cfg(feature = "json")]
 impl<'de> Deserialize<'de> for DexId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -208,7 +218,7 @@ impl<'de> Deserialize<'de> for DexId {
     }
 }
 
-#[cfg(feature = "abi")]
+#[cfg(all(feature = "abi", feature = "json"))]
 impl near_sdk::schemars::JsonSchema for DexId {
     fn schema_name() -> String {
         "DexId".to_string()
@@ -222,4 +232,13 @@ impl near_sdk::schemars::JsonSchema for DexId {
 
 pub trait Dex {
     fn swap(&mut self, request: SwapRequest) -> SwapResponse;
+}
+
+#[macro_export]
+macro_rules! expect {
+    ($condition:expr, $message:literal $(, $fmt_args:expr)*) => {
+        if !$condition {
+            panic!($message $(, $fmt_args)*);
+        }
+    };
 }

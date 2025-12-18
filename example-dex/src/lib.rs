@@ -2,18 +2,25 @@
 
 use std::collections::HashMap;
 
-use near_sdk::{AccountId, BorshStorageKey, NearToken, json_types::U128, near, store::LookupMap};
-use tear_sdk::{
+use intear_dex_types::{
     AssetId, AssetWithdrawRequest, AssetWithdrawalType, Dex, DexCallResponse, SwapRequest,
-    SwapRequestAmount, SwapResponse,
+    SwapRequestAmount, SwapResponse, expect,
+};
+use near_sdk::{
+    AccountId, BorshStorageKey, NearToken, PanicOnDefault, json_types::U128, near, store::LookupMap,
 };
 
-type PoolId = String;
+type PoolId = u64;
 
+/// The simplest possible x*y=k pool, with just one
+/// liquidity provider. Demonstrates the basic functionality
+/// of swaps, adding / withdrawing liquidity, storage
+/// management, and event emission.
 #[near(contract_state)]
+#[derive(PanicOnDefault)]
 pub struct SimpleSwap {
     pools: LookupMap<PoolId, SimplePool>,
-    pool_counter: u64,
+    pool_counter: PoolId,
 }
 
 #[near(serializers=[borsh])]
@@ -46,32 +53,31 @@ pub enum SimpleSwapEvent {
     },
 }
 
-impl Default for SimpleSwap {
-    fn default() -> Self {
-        Self {
-            pools: LookupMap::new(StorageKey::Pools),
-            pool_counter: 0,
-        }
-    }
-}
-
 #[near]
 impl Dex for SimpleSwap {
-    fn swap(&mut self, request: SwapRequest) -> SwapResponse {
-        let Some(pool) = self.pools.get(&request.message) else {
+    #[result_serializer(borsh)]
+    fn swap(&mut self, #[serializer(borsh)] request: SwapRequest) -> SwapResponse {
+        #[near(serializers=[borsh])]
+        struct SwapArgs {
+            pool_id: PoolId,
+        }
+        let Ok(SwapArgs { pool_id }) = near_sdk::borsh::from_slice(&request.message) else {
+            panic!("Invalid message");
+        };
+        let Some(pool) = self.pools.get(&pool_id) else {
             panic!("Pool not found");
         };
-        assert!(
+        expect!(
             pool.assets.0.asset_id == request.asset_in
                 || pool.assets.1.asset_id == request.asset_in,
             "Invalid asset in"
         );
-        assert!(
+        expect!(
             pool.assets.0.asset_id == request.asset_out
                 || pool.assets.1.asset_id == request.asset_out,
             "Invalid asset out"
         );
-        assert!(
+        expect!(
             pool.assets.0.balance.0 > 0 && pool.assets.1.balance.0 > 0,
             "Pool is empty"
         );
@@ -79,7 +85,7 @@ impl Dex for SimpleSwap {
 
         match request.amount {
             SwapRequestAmount::ExactIn(amount_in) => {
-                assert!(amount_in.0 > 0, "Amount must be greater than 0");
+                expect!(amount_in.0 > 0, "Amount must be greater than 0");
                 let in_balance = U256::from(if first_in {
                     pool.assets.0.balance.0
                 } else {
@@ -99,7 +105,7 @@ impl Dex for SimpleSwap {
                 }
             }
             SwapRequestAmount::ExactOut(amount_out) => {
-                assert!(amount_out.0 > 0, "Amount must be greater than 0");
+                expect!(amount_out.0 > 0, "Amount must be greater than 0");
                 let in_balance = U256::from(if first_in {
                     pool.assets.0.balance.0
                 } else {
@@ -125,19 +131,37 @@ impl Dex for SimpleSwap {
 
 #[near]
 impl SimpleSwap {
+    #[init]
+    pub fn new() -> Self {
+        Self {
+            pools: LookupMap::new(StorageKey::Pools),
+            pool_counter: 0,
+        }
+    }
+
+    #[result_serializer(borsh)]
     pub fn create_pool(
         &mut self,
-        #[allow(unused_mut)] mut attached_assets: HashMap<AssetId, U128>,
-        assets: (AssetId, AssetId),
+        #[serializer(borsh)]
+        #[allow(unused_mut)]
+        mut attached_assets: HashMap<AssetId, U128>,
+        #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
-        assert!(assets.0 != assets.1, "Assets must be different");
+        #[near(serializers=[borsh])]
+        struct CreatePoolArgs {
+            assets: (AssetId, AssetId),
+        }
+        let Ok(CreatePoolArgs { assets }) = near_sdk::borsh::from_slice(&args) else {
+            panic!("Invalid args");
+        };
+        expect!(assets.0 != assets.1, "Assets must be different");
 
-        let pool_id = self.pool_counter.to_string();
+        let pool_id = self.pool_counter;
         self.pool_counter += 1;
 
         let storage_usage_before = near_sdk::env::storage_usage();
         let old_pool_with_same_id = self.pools.insert(
-            pool_id.clone(),
+            pool_id,
             SimplePool {
                 assets: (
                     AssetWithBalance {
@@ -152,7 +176,7 @@ impl SimpleSwap {
                 owner_id: near_sdk::env::predecessor_account_id(),
             },
         );
-        assert!(
+        expect!(
             old_pool_with_same_id.is_none(),
             "Pool with same id somehow already exists"
         );
@@ -171,22 +195,27 @@ impl SimpleSwap {
                 .expect("Near should be attached for storage")
                 .0,
         );
-        assert!(
+        expect!(
             attached_near >= storage_cost,
             "Not enough near attached for storage. Required: {storage_cost}, attached: {attached_near}"
         );
-        assert!(
+        expect!(
             attached_assets.is_empty(),
             "No assets other than NEAR should be attached"
         );
 
         SimpleSwapEvent::PoolCreated {
-            pool_id: pool_id.clone(),
+            pool_id,
             owner_id: near_sdk::env::predecessor_account_id(),
             assets,
         }
         .emit();
 
+        #[near(serializers=[borsh])]
+        struct CreatePoolResponse {
+            pool_id: PoolId,
+        }
+        let response = CreatePoolResponse { pool_id };
         DexCallResponse {
             asset_withdraw_requests: if let Some(leftover) = attached_near.checked_sub(storage_cost)
             {
@@ -201,21 +230,29 @@ impl SimpleSwap {
                 vec![]
             },
             add_storage_deposit: storage_cost,
-            response: near_sdk::serde_json::json!({
-                "new_pool_id": pool_id,
-            }),
+            response: near_sdk::borsh::to_vec(&response).expect("Failed to serialize response"),
         }
     }
 
+    #[result_serializer(borsh)]
     pub fn add_liquidity(
         &mut self,
-        #[allow(unused_mut)] mut attached_assets: HashMap<AssetId, U128>,
-        pool_id: PoolId,
+        #[allow(unused_mut)]
+        #[serializer(borsh)]
+        mut attached_assets: HashMap<AssetId, U128>,
+        #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
+        #[near(serializers=[borsh])]
+        struct AddLiquidityArgs {
+            pool_id: PoolId,
+        }
+        let Ok(AddLiquidityArgs { pool_id }) = near_sdk::borsh::from_slice(&args) else {
+            panic!("Invalid args");
+        };
         let Some(pool) = self.pools.get_mut(&pool_id) else {
             panic!("Pool not found");
         };
-        assert!(
+        expect!(
             pool.owner_id == near_sdk::env::predecessor_account_id(),
             "Only pool owner can add liquidity"
         );
@@ -225,7 +262,7 @@ impl SimpleSwap {
         let asset_2_amount = attached_assets
             .remove(&pool.assets.1.asset_id)
             .expect("Asset 2 not found");
-        assert!(
+        expect!(
             attached_assets.is_empty(),
             "No assets other than the two pool assets should be attached"
         );
@@ -245,29 +282,44 @@ impl SimpleSwap {
             .expect("Overflow");
 
         SimpleSwapEvent::LiquidityAdded {
-            pool_id: pool_id.clone(),
+            pool_id,
             amounts: (asset_1_amount, asset_2_amount),
         }
         .emit();
 
+        #[near(serializers=[borsh])]
+        struct AddLiquidityResponse;
+        let response = AddLiquidityResponse;
         DexCallResponse {
             asset_withdraw_requests: vec![],
             add_storage_deposit: NearToken::ZERO,
-            response: near_sdk::serde_json::json!({}),
+            response: near_sdk::borsh::to_vec(&response).expect("Failed to serialize response"),
         }
     }
 
+    #[result_serializer(borsh)]
     pub fn remove_liquidity(
         &mut self,
-        pool_id: PoolId,
-        assets_to_remove: (U128, U128),
-        attached_assets: HashMap<AssetId, U128>,
+        #[serializer(borsh)] attached_assets: HashMap<AssetId, U128>,
+        #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
-        assert!(attached_assets.is_empty(), "No assets should be attached");
+        #[near(serializers=[borsh])]
+        struct RemoveLiquidityArgs {
+            pool_id: PoolId,
+            assets_to_remove: (U128, U128),
+        }
+        let Ok(RemoveLiquidityArgs {
+            pool_id,
+            assets_to_remove,
+        }) = near_sdk::borsh::from_slice(&args)
+        else {
+            panic!("Invalid args");
+        };
+        expect!(attached_assets.is_empty(), "No assets should be attached");
         let Some(pool) = self.pools.get_mut(&pool_id) else {
             panic!("Pool not found");
         };
-        assert!(
+        expect!(
             pool.owner_id == near_sdk::env::predecessor_account_id(),
             "Only pool owner can remove liquidity"
         );
@@ -287,11 +339,14 @@ impl SimpleSwap {
             .expect("Not enough balance for asset 2 withdrawal");
 
         SimpleSwapEvent::LiquidityRemoved {
-            pool_id: pool_id.clone(),
+            pool_id,
             amounts: assets_to_remove,
         }
         .emit();
 
+        #[near(serializers=[borsh])]
+        struct RemoveLiquidityResponse;
+        let response = RemoveLiquidityResponse;
         DexCallResponse {
             asset_withdraw_requests: vec![
                 AssetWithdrawRequest {
@@ -310,7 +365,7 @@ impl SimpleSwap {
                 },
             ],
             add_storage_deposit: NearToken::ZERO,
-            response: near_sdk::serde_json::json!({}),
+            response: near_sdk::borsh::to_vec(&response).expect("Failed to serialize response"),
         }
     }
 }

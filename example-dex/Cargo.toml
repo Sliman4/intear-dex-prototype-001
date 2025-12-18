@@ -7,9 +7,9 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-near-sdk = "5"
+near-sdk = { version = "5", default-features = false }
 uint = "0.10"
-tear-sdk = { path = "../tear-sdk" }
+intear-dex-types = { path = "../intear-dex-types", features = ["json"] }
 
 [profile.release]
 codegen-units = 1

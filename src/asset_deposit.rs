@@ -1,9 +1,9 @@
+use intear_dex_types::{AssetId, expect};
 use near_contract_standards::{
     fungible_token::receiver::FungibleTokenReceiver,
     non_fungible_token::{self, core::NonFungibleTokenReceiver},
 };
 use near_sdk::{AccountId, PromiseOrValue, json_types::U128, near};
-use tear_sdk::AssetId;
 
 use crate::{DexEngine, DexEngineExt, IntearDexEvent, internal_asset_operations::AccountOrDexId};
 
@@ -14,12 +14,27 @@ impl DexEngine {
     /// balance for the user.
     pub fn near_deposit(&mut self) {
         let storage_usage_before = near_sdk::env::storage_usage();
+        let deposit = U128(near_sdk::env::attached_deposit().as_yoctonear());
         self.deposit_assets(
             AccountOrDexId::Account(near_sdk::env::predecessor_account_id()),
             AssetId::Near,
             U128(near_sdk::env::attached_deposit().as_yoctonear()),
         );
+        self.contract_tracked_balance
+            .entry(AssetId::Near)
+            .and_modify(|b| {
+                b.0 = b.0.checked_add(deposit.0).unwrap_or_else(|| {
+                    panic!(
+                        "Balance overflow for contract and asset Near: {} + {} > {}",
+                        b.0,
+                        deposit.0,
+                        u128::MAX
+                    )
+                })
+            })
+            .or_insert(deposit);
         self.user_balances.flush();
+        self.contract_tracked_balance.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
         self.user_storage_balances.charge(
             &near_sdk::env::predecessor_account_id(),
@@ -30,12 +45,13 @@ impl DexEngine {
         IntearDexEvent::UserDeposit {
             account_id: near_sdk::env::predecessor_account_id(),
             asset_id: AssetId::Near,
-            amount: U128(near_sdk::env::attached_deposit().as_yoctonear()),
+            amount: deposit,
         }
         .emit();
     }
 }
 
+// TODO: Force user to register assets before depositing them
 #[near]
 impl FungibleTokenReceiver for DexEngine {
     fn ft_on_transfer(
@@ -52,7 +68,21 @@ impl FungibleTokenReceiver for DexEngine {
             AssetId::Nep141(token_id.clone()),
             amount,
         );
+        self.contract_tracked_balance
+            .entry(AssetId::Nep141(token_id.clone()))
+            .and_modify(|b| {
+                b.0 = b.0.checked_add(amount.0).unwrap_or_else(|| {
+                    panic!(
+                        "Balance overflow for contract and asset Nep141: {} + {} > {}",
+                        b.0,
+                        amount.0,
+                        u128::MAX
+                    )
+                })
+            })
+            .or_insert(amount);
         self.user_balances.flush();
+        self.contract_tracked_balance.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
         self.user_storage_balances
             .charge(&sender_id, storage_usage_before, storage_usage_after);
@@ -85,7 +115,20 @@ impl NonFungibleTokenReceiver for DexEngine {
             AssetId::Nep171(contract_id.clone(), token_id.to_string()),
             U128(1),
         );
+        self.contract_tracked_balance
+            .entry(AssetId::Nep171(contract_id.clone(), token_id.to_string()))
+            .and_modify(|b| {
+                b.0 = b.0.checked_add(1).unwrap_or_else(|| {
+                    panic!(
+                        "Balance overflow for contract and asset Nep171: {} + 1 > {}",
+                        b.0,
+                        u128::MAX
+                    )
+                })
+            })
+            .or_insert(U128(1));
         self.user_balances.flush();
+        self.contract_tracked_balance.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
         self.user_storage_balances
             .charge(&sender_id, storage_usage_before, storage_usage_after);
@@ -111,7 +154,7 @@ impl DexEngine {
         amounts: Vec<U128>,
         #[allow(unused_variables)] msg: String,
     ) -> PromiseOrValue<Vec<U128>> {
-        assert!(
+        expect!(
             previous_owner_ids.len() == token_ids.len()
                 && previous_owner_ids.len() == amounts.len(),
             "Invalid input array lengths"
@@ -130,6 +173,19 @@ impl DexEngine {
                 AssetId::Nep245(contract_id.clone(), token_id.clone()),
                 *amount,
             );
+            self.contract_tracked_balance
+                .entry(AssetId::Nep245(contract_id.clone(), token_id.clone()))
+                .and_modify(|b| {
+                    b.0 = b.0.checked_add(amount.0).unwrap_or_else(|| {
+                        panic!(
+                            "Balance overflow for contract and asset Nep245: {} + {} > {}",
+                            b.0,
+                            amount.0,
+                            u128::MAX
+                        )
+                    })
+                })
+                .or_insert(*amount);
 
             IntearDexEvent::UserDeposit {
                 account_id: previous_owner_id.clone(),
@@ -139,6 +195,7 @@ impl DexEngine {
             .emit();
         }
         self.user_balances.flush();
+        self.contract_tracked_balance.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
         self.user_storage_balances
             .charge(&sender_id, storage_usage_before, storage_usage_after);

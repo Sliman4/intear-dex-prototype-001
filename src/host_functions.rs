@@ -15,7 +15,7 @@ macro_rules! declare_unimplemented_host_functions {
             $var.func_wrap(
                 "env",
                 stringify!($name),
-                |_caller: Caller<'_, RunnerData<_>>, $(#[allow(unused_variables)] $arg: $arg_ty),*| -> unimplemented_host_functions_return_type!(@return_type $($ret)?) {
+                |_caller: Caller<'_, RunnerData>, $(#[allow(unused_variables)] $arg: $arg_ty),*| -> unimplemented_host_functions_return_type!(@return_type $($ret)?) {
                     unimplemented!(concat!("Function ", stringify!($name), " is not implemented"))
                 },
             )
@@ -264,7 +264,7 @@ macro_rules! impl_supported_host_functions {
     };
 }
 
-pub fn register_len<Response>(caller: Caller<'_, RunnerData<Response>>, register_id: u64) -> u64 {
+pub fn register_len(caller: Caller<'_, RunnerData>, register_id: u64) -> u64 {
     caller
         .data()
         .registers
@@ -273,11 +273,7 @@ pub fn register_len<Response>(caller: Caller<'_, RunnerData<Response>>, register
         .unwrap_or(u64::MAX)
 }
 
-pub fn read_register<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
-    register_id: u64,
-    ptr: u64,
-) {
+pub fn read_register(mut caller: Caller<'_, RunnerData>, register_id: u64, ptr: u64) {
     let memory = caller
         .get_export("memory")
         .and_then(|m| m.into_memory())
@@ -293,8 +289,8 @@ pub fn read_register<Response>(
         .expect("Failed to write data to guest memory");
 }
 
-pub fn write_register<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn write_register(
+    mut caller: Caller<'_, RunnerData>,
     register_id: u64,
     data_len: u64,
     data_ptr: u64,
@@ -310,12 +306,12 @@ pub fn write_register<Response>(
     caller.data_mut().registers.insert(register_id, buf);
 }
 
-pub fn input<Response>(mut caller: Caller<'_, RunnerData<Response>>, register_id: u64) {
-    let buf = caller.data().request.to_string().into_bytes();
-    caller.data_mut().registers.insert(register_id, buf);
+pub fn input(mut caller: Caller<'_, RunnerData>, register_id: u64) {
+    let request = caller.data().request.clone();
+    caller.data_mut().registers.insert(register_id, request);
 }
 
-pub fn attached_deposit<Response>(mut caller: Caller<'_, RunnerData<Response>>, balance_ptr: u64) {
+pub fn attached_deposit(mut caller: Caller<'_, RunnerData>, balance_ptr: u64) {
     let attached_deposit = NearToken::default().as_yoctonear(); // always 0
     let memory = caller
         .get_export("memory")
@@ -330,21 +326,12 @@ pub fn attached_deposit<Response>(mut caller: Caller<'_, RunnerData<Response>>, 
         .expect("Failed to write data to guest memory");
 }
 
-pub fn predecessor_account_id<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
-    register_id: u64,
-) {
+pub fn predecessor_account_id(mut caller: Caller<'_, RunnerData>, register_id: u64) {
     let buf = caller.data().predecessor_id.to_string().into_bytes();
     caller.data_mut().registers.insert(register_id, buf);
 }
 
-pub fn value_return<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
-    value_len: u64,
-    value_ptr: u64,
-) where
-    Response: for<'de> near_sdk::serde::Deserialize<'de>,
-{
+pub fn value_return(mut caller: Caller<'_, RunnerData>, value_len: u64, value_ptr: u64) {
     let memory = caller
         .get_export("memory")
         .and_then(|m| m.into_memory())
@@ -353,17 +340,15 @@ pub fn value_return<Response>(
     memory
         .read(&caller, value_ptr as usize, &mut buf)
         .expect("Failed to get return value");
-    let response =
-        near_sdk::serde_json::from_slice(&buf).expect("Failed to parse return value as response");
-    caller.data_mut().response = Some(response);
+    caller.data_mut().response = Some(buf);
 }
 
-pub fn panic<Response>(caller: Caller<'_, RunnerData<Response>>) {
+pub fn panic(caller: Caller<'_, RunnerData>) {
     let dex_id = caller.data().dex_id.clone();
     panic!("[{dex_id}] Dex panicked");
 }
 
-pub fn panic_utf8<Response>(caller: Caller<'_, RunnerData<Response>>, len: u64, ptr: u64) {
+pub fn panic_utf8(caller: Caller<'_, RunnerData>, len: u64, ptr: u64) {
     let dex_id = caller.data().dex_id.clone();
     let memory = caller
         .get_export("memory")
@@ -377,8 +362,8 @@ pub fn panic_utf8<Response>(caller: Caller<'_, RunnerData<Response>>, len: u64, 
     panic!("[{dex_id}] Dex panicked: {message}");
 }
 
-pub fn storage_write<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn storage_write(
+    mut caller: Caller<'_, RunnerData>,
     key_len: u64,
     key_ptr: u64,
     value_len: u64,
@@ -411,8 +396,8 @@ pub fn storage_write<Response>(
     }
 }
 
-pub fn storage_read<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn storage_read(
+    mut caller: Caller<'_, RunnerData>,
     key_len: u64,
     key_ptr: u64,
     register_id: u64,
@@ -435,8 +420,8 @@ pub fn storage_read<Response>(
     }
 }
 
-pub fn storage_remove<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn storage_remove(
+    mut caller: Caller<'_, RunnerData>,
     key_len: u64,
     key_ptr: u64,
     register_id: u64,
@@ -459,11 +444,7 @@ pub fn storage_remove<Response>(
     }
 }
 
-pub fn storage_has_key<Response>(
-    caller: Caller<'_, RunnerData<Response>>,
-    key_len: u64,
-    key_ptr: u64,
-) -> u64 {
+pub fn storage_has_key(caller: Caller<'_, RunnerData>, key_len: u64, key_ptr: u64) -> u64 {
     let dex_id = caller.data().dex_id.clone();
     let memory = caller
         .get_export("memory")
@@ -481,19 +462,19 @@ pub fn storage_has_key<Response>(
     }
 }
 
-pub fn block_index<Response>(_caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn block_index(_caller: Caller<'_, RunnerData>) -> u64 {
     near_sdk::env::block_height()
 }
 
-pub fn block_timestamp<Response>(_caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn block_timestamp(_caller: Caller<'_, RunnerData>) -> u64 {
     near_sdk::env::block_timestamp()
 }
 
-pub fn epoch_height<Response>(_caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn epoch_height(_caller: Caller<'_, RunnerData>) -> u64 {
     near_sdk::env::epoch_height()
 }
 
-pub fn storage_usage<Response>(mut caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn storage_usage(mut caller: Caller<'_, RunnerData>) -> u64 {
     caller.data_mut().dex_storage.flush();
     let storage_usage_now = near_sdk::env::storage_usage();
     let storage_usage_during_transaction = i64::try_from(storage_usage_now)
@@ -515,15 +496,15 @@ pub fn storage_usage<Response>(mut caller: Caller<'_, RunnerData<Response>>) -> 
         .expect("Result of storage usage calculation is not within u64 range")
 }
 
-pub fn prepaid_gas<Response>(_caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn prepaid_gas(_caller: Caller<'_, RunnerData>) -> u64 {
     near_sdk::env::prepaid_gas().as_gas()
 }
 
-pub fn used_gas<Response>(_caller: Caller<'_, RunnerData<Response>>) -> u64 {
+pub fn used_gas(_caller: Caller<'_, RunnerData>) -> u64 {
     near_sdk::env::used_gas().as_gas()
 }
 
-pub fn random_seed<Response>(mut caller: Caller<'_, RunnerData<Response>>, register_id: u64) {
+pub fn random_seed(mut caller: Caller<'_, RunnerData>, register_id: u64) {
     let seed = near_sdk::env::random_seed();
     caller
         .data_mut()
@@ -531,8 +512,8 @@ pub fn random_seed<Response>(mut caller: Caller<'_, RunnerData<Response>>, regis
         .insert(register_id, seed.to_vec());
 }
 
-pub fn sha256<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn sha256(
+    mut caller: Caller<'_, RunnerData>,
     value_len: u64,
     value_ptr: u64,
     register_id: u64,
@@ -552,8 +533,8 @@ pub fn sha256<Response>(
         .insert(register_id, hash.to_vec());
 }
 
-pub fn keccak256<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn keccak256(
+    mut caller: Caller<'_, RunnerData>,
     value_len: u64,
     value_ptr: u64,
     register_id: u64,
@@ -573,8 +554,8 @@ pub fn keccak256<Response>(
         .insert(register_id, hash.to_vec());
 }
 
-pub fn keccak512<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn keccak512(
+    mut caller: Caller<'_, RunnerData>,
     value_len: u64,
     value_ptr: u64,
     register_id: u64,
@@ -594,8 +575,8 @@ pub fn keccak512<Response>(
         .insert(register_id, hash.to_vec());
 }
 
-pub fn ripemd160<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn ripemd160(
+    mut caller: Caller<'_, RunnerData>,
     value_len: u64,
     value_ptr: u64,
     register_id: u64,
@@ -616,8 +597,8 @@ pub fn ripemd160<Response>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn ecrecover<Response>(
-    mut caller: Caller<'_, RunnerData<Response>>,
+pub fn ecrecover(
+    mut caller: Caller<'_, RunnerData>,
     hash_len: u64,
     hash_ptr: u64,
     sig_len: u64,
@@ -663,8 +644,8 @@ pub fn ecrecover<Response>(
     }
 }
 
-pub fn ed25519_verify<Response>(
-    caller: Caller<'_, RunnerData<Response>>,
+pub fn ed25519_verify(
+    caller: Caller<'_, RunnerData>,
     signature_len: u64,
     signature_ptr: u64,
     message_len: u64,
@@ -698,7 +679,7 @@ pub fn ed25519_verify<Response>(
     }
 }
 
-pub fn log_utf8<Response>(caller: Caller<'_, RunnerData<Response>>, len: u64, ptr: u64) {
+pub fn log_utf8(caller: Caller<'_, RunnerData>, len: u64, ptr: u64) {
     let dex_id = caller.data().dex_id.clone();
     let memory = caller
         .get_export("memory")
@@ -728,7 +709,7 @@ pub fn log_utf8<Response>(caller: Caller<'_, RunnerData<Response>>, len: u64, pt
     near_sdk::env::log_str(&format!("[{dex_id}] {message}"));
 }
 
-pub fn log_utf16<Response>(caller: Caller<'_, RunnerData<Response>>, len: u64, ptr: u64) {
+pub fn log_utf16(caller: Caller<'_, RunnerData>, len: u64, ptr: u64) {
     let dex_id = caller.data().dex_id.clone();
     let memory = caller
         .get_export("memory")

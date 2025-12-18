@@ -1,9 +1,10 @@
-use near_sdk::{AccountId, json_types::U128};
-use tear_sdk::{AssetId, DexId};
+use intear_dex_types::{AssetId, DexId, expect};
+use near_sdk::{AccountId, json_types::U128, near};
 
 use crate::{DexEngine, IntearDexEvent};
 
 #[derive(Clone, Debug, PartialEq)]
+#[near(serializers=[json])]
 pub enum AccountOrDexId {
     Account(AccountId),
     Dex(DexId),
@@ -24,7 +25,7 @@ impl DexEngine {
         if amount.0 == 0 {
             return;
         }
-        self.assert_asset_registered(from.clone(), asset_id.clone());
+        self.assert_asset_registered(to.clone(), asset_id.clone());
         self.withdraw_assets(from, asset_id.clone(), amount);
         self.deposit_assets(to, asset_id.clone(), amount);
     }
@@ -49,7 +50,7 @@ impl DexEngine {
                     panic!("Dex balance not found for dex {dex_id} and asset {asset_id}")
                 }),
         };
-        assert!(
+        expect!(
             balance.0 >= amount.0,
             "Insufficient balance in ensure_has_assets: {} < {}",
             balance.0,
