@@ -19,7 +19,8 @@ use crate::{
     impl_unsupported_host_functions, internal_asset_operations::AccountOrDexId,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[json])]
 pub enum Operation {
     /// Register storage for assets. No-op if assets are
@@ -618,7 +619,6 @@ impl DexEngine {
 
 #[near]
 impl DexEngine {
-    // TODO: Test failure case
     #[private]
     pub fn after_withdraw(
         &mut self,
@@ -642,7 +642,7 @@ impl DexEngine {
             }
             Err(error) => {
                 near_sdk::env::log_str(&format!(
-                    "Refunding to {withdraw_from:?} because withdrawal to {withdraw_to} failed: {error:?}"
+                    "Refunding to {withdraw_from} because withdrawal to {withdraw_to} failed: {error:?}"
                 ));
                 self.internal_increase_assets(withdraw_from, asset_id.clone(), amount);
                 self.total_in_custody

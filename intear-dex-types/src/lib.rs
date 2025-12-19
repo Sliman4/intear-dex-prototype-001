@@ -11,7 +11,8 @@ use near_sdk::{
 };
 
 /// Request for a swap operation.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[cfg_attr(not(feature = "json"), near(serializers=[borsh]))]
 #[cfg_attr(feature = "json", near(serializers=[borsh, json]))]
 pub struct SwapRequest {
@@ -33,21 +34,24 @@ pub struct SwapRequest {
 ///
 /// To mark operation as unsuccessful and refund the attached
 /// assets to the user, the dex must panic.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct SwapResponse {
     pub amount_in: U128,
     pub amount_out: U128,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct DexCallRequest {
     pub attached_assets: HashMap<AssetId, U128>,
     pub args: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct DexCallResponse {
     pub asset_withdraw_requests: Vec<AssetWithdrawRequest>,
@@ -55,7 +59,8 @@ pub struct DexCallResponse {
     pub response: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct AssetWithdrawRequest {
     pub asset_id: AssetId,
@@ -63,7 +68,8 @@ pub struct AssetWithdrawRequest {
     pub withdrawal_type: AssetWithdrawalType,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub enum AssetWithdrawalType {
     ToInternalUserBalance(AccountId),
@@ -71,7 +77,8 @@ pub enum AssetWithdrawalType {
     WithdrawUnderlyingAsset(AccountId),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub enum AssetId {
     Near,
@@ -165,7 +172,8 @@ impl near_sdk::schemars::JsonSchema for AssetId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[cfg_attr(not(feature = "json"), near(serializers=[borsh]))]
 #[cfg_attr(feature = "json", near(serializers=[borsh, json]))]
 pub enum SwapRequestAmount {
@@ -173,7 +181,8 @@ pub enum SwapRequestAmount {
     ExactOut(U128),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct DexId {
     pub deployer: AccountId,

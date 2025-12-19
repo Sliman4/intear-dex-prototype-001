@@ -1,13 +1,25 @@
+use std::fmt::Display;
+
 use intear_dex_types::{AssetId, DexId, expect};
 use near_sdk::{AccountId, json_types::U128, near};
 
 use crate::{DexEngine, IntearDexEvent};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
+#[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[json])]
 pub enum AccountOrDexId {
     Account(AccountId),
     Dex(DexId),
+}
+
+impl Display for AccountOrDexId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccountOrDexId::Account(account) => write!(f, "Account({account})"),
+            AccountOrDexId::Dex(dex_id) => write!(f, "Dex({dex_id})"),
+        }
+    }
 }
 
 impl DexEngine {
