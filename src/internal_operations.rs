@@ -42,7 +42,15 @@ pub enum Operation {
         to: Option<AccountId>,
     },
     /// Swap assets between two assets on the selected dex.
-    SwapSimple { dex_id: DexId, request: SwapRequest },
+    SwapSimple {
+        dex_id: DexId,
+        message: Base64VecU8,
+        asset_in: AssetId,
+        asset_out: AssetId,
+        /// If None, the ExactIn amount will be taken from
+        /// the previous swap operation result.
+        amount: Option<U128>,
+    },
     /// Call a method on a dex.
     DexCall {
         dex_id: DexId,
@@ -335,12 +343,24 @@ impl DexEngine {
         for asset_id in asset_ids {
             match r#for.clone() {
                 AccountOrDexId::Account(account) => {
-                    self.user_balances
-                        .insert((account, asset_id.clone()), U128(0));
+                    if self
+                        .user_balances
+                        .get(&(account.clone(), asset_id.clone()))
+                        .is_none()
+                    {
+                        self.user_balances
+                            .insert((account, asset_id.clone()), U128(0));
+                    }
                 }
                 AccountOrDexId::Dex(dex_id) => {
-                    self.dex_balances
-                        .insert((dex_id, asset_id.clone()), U128(0));
+                    if self
+                        .dex_balances
+                        .get(&(dex_id.clone(), asset_id.clone()))
+                        .is_none()
+                    {
+                        self.dex_balances
+                            .insert((dex_id, asset_id.clone()), U128(0));
+                    }
                 }
             }
             if self.total_in_custody.get(&asset_id).is_none() {
@@ -366,8 +386,6 @@ impl DexEngine {
         const GAS_FOR_NFT_TRANSFER: Gas = Gas::from_tgas(10);
         const GAS_FOR_MT_TRANSFER: Gas = Gas::from_tgas(10);
         const GAS_FOR_WITHDRAWAL_CALLBACK: Gas = Gas::from_tgas(5);
-
-        near_sdk::assert_one_yocto();
 
         let amount = amount.unwrap_or_else(|| {
             self.asset_balance_of(withdraw_from.clone(), asset_id.clone())
@@ -455,6 +473,7 @@ impl DexEngine {
         operations: Vec<Operation>,
         by: AccountId,
     ) {
+        let mut last_output_amount = None;
         for operation in operations {
             match operation {
                 Operation::RegisterAssets { asset_ids, r#for } => {
@@ -479,15 +498,26 @@ impl DexEngine {
                     )
                     .detach();
                 }
-                Operation::SwapSimple { dex_id, request } => {
-                    self.internal_swap_simple(
+                Operation::SwapSimple {
+                    dex_id,
+                    message,
+                    asset_in,
+                    asset_out,
+                    amount,
+                } => {
+                    let amount = amount
+                        .or(last_output_amount)
+                        .map(SwapRequestAmount::ExactIn)
+                        .expect("Amount is required for first SwapSimple operation");
+                    let (_amount_in, amount_out) = self.internal_swap_simple(
                         dex_id,
-                        request.message,
-                        request.asset_in,
-                        request.asset_out,
-                        request.amount,
+                        message,
+                        asset_in,
+                        asset_out,
+                        amount,
                         by.clone(),
                     );
+                    last_output_amount = Some(amount_out);
                 }
                 Operation::DexCall {
                     dex_id,

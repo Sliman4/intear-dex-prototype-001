@@ -152,7 +152,6 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
     }
 
     fn storage_withdraw(&mut self, account_id: K, amount: Option<NearToken>) -> StorageBalance {
-        near_sdk::assert_one_yocto();
         let Some(storage_used) = self.storage_balances.get_mut(&account_id) else {
             panic!("Storage used not found");
         };
@@ -176,8 +175,6 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
     }
 
     fn storage_unregister(&mut self, account_id: K, force: Option<bool>) -> bool {
-        near_sdk::assert_one_yocto();
-
         if force.is_some_and(|f| f) {
             panic!("Force unregistration is not supported");
         }
@@ -194,8 +191,13 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
                 .expect("Storage somehow grew after removing data"),
         );
         if let Some(leftover) = storage_used.used.checked_sub(storage_freed) {
-            panic!("User is using {leftover} worth of storage")
+            if !leftover.is_zero() {
+                panic!("User is using {leftover} worth of storage")
+            } else {
+                true
+            }
         } else {
+            // freed up more than needed, but it's ok
             true
         }
     }
@@ -228,12 +230,14 @@ impl StorageManagement for DexEngine {
 
     #[payable]
     fn storage_withdraw(&mut self, amount: Option<NearToken>) -> StorageBalance {
+        near_sdk::assert_one_yocto();
         self.user_storage_balances
             .storage_withdraw(near_sdk::env::predecessor_account_id(), amount)
     }
 
     #[payable]
     fn storage_unregister(&mut self, force: Option<bool>) -> bool {
+        near_sdk::assert_one_yocto();
         self.user_storage_balances
             .storage_unregister(near_sdk::env::predecessor_account_id(), force)
     }
@@ -265,6 +269,7 @@ impl DexEngine {
         dex_id: DexId,
         amount: Option<NearToken>,
     ) -> StorageBalance {
+        near_sdk::assert_one_yocto();
         expect!(
             dex_id.deployer == near_sdk::env::predecessor_account_id(),
             "Only the deployer can withdraw dex storage"

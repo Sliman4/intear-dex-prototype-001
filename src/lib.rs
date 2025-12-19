@@ -227,6 +227,7 @@ impl DexEngine {
         amount: Option<U128>,
         withdraw_to: Option<AccountId>,
     ) -> Promise {
+        near_sdk::assert_one_yocto();
         self.internal_withdraw(
             asset_id,
             amount,
@@ -248,5 +249,9 @@ impl DexEngine {
             }
             AccountOrDexId::Dex(dex_id) => self.dex_balances.get(&(dex_id, asset_id)).copied(),
         }
+    }
+
+    pub fn total_in_custody(&self, asset_id: AssetId) -> Option<U128> {
+        self.total_in_custody.get(&asset_id).copied()
     }
 }
