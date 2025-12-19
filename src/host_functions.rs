@@ -15,7 +15,7 @@ macro_rules! declare_unimplemented_host_functions {
             $var.func_wrap(
                 "env",
                 stringify!($name),
-                |_caller: Caller<'_, RunnerData>, $(#[allow(unused_variables)] $arg: $arg_ty),*| -> unimplemented_host_functions_return_type!(@return_type $($ret)?) {
+                |_caller: ::wasmi::Caller<'_, RunnerData>, $(#[allow(unused_variables)] $arg: $arg_ty),*| -> $crate::unimplemented_host_functions_return_type!(@return_type $($ret)?) {
                     unimplemented!(concat!("Function ", stringify!($name), " is not implemented"))
                 },
             )
@@ -40,7 +40,7 @@ macro_rules! unimplemented_host_functions_return_type {
 #[macro_export]
 macro_rules! impl_unsupported_host_functions {
     ($var: ident) => {
-        declare_unimplemented_host_functions! {
+        $crate::declare_unimplemented_host_functions! {
             $var:
 
             // ####################
@@ -233,34 +233,34 @@ macro_rules! impl_host_function {
 #[macro_export]
 macro_rules! impl_supported_host_functions {
     ($var: ident) => {
-        impl_host_function!($var, register_len);
-        impl_host_function!($var, read_register);
-        impl_host_function!($var, write_register);
-        impl_host_function!($var, input);
-        impl_host_function!($var, attached_deposit);
-        impl_host_function!($var, predecessor_account_id);
-        impl_host_function!($var, value_return);
-        impl_host_function!($var, panic);
-        impl_host_function!($var, panic_utf8);
-        impl_host_function!($var, storage_write);
-        impl_host_function!($var, storage_read);
-        impl_host_function!($var, storage_remove);
-        impl_host_function!($var, storage_has_key);
-        impl_host_function!($var, block_index);
-        impl_host_function!($var, block_timestamp);
-        impl_host_function!($var, epoch_height);
-        impl_host_function!($var, storage_usage);
-        impl_host_function!($var, prepaid_gas);
-        impl_host_function!($var, used_gas);
-        impl_host_function!($var, random_seed);
-        impl_host_function!($var, sha256);
-        impl_host_function!($var, keccak256);
-        impl_host_function!($var, keccak512);
-        impl_host_function!($var, ripemd160);
-        impl_host_function!($var, ecrecover);
-        impl_host_function!($var, ed25519_verify);
-        impl_host_function!($var, log_utf8);
-        impl_host_function!($var, log_utf16);
+        $crate::impl_host_function!($var, register_len);
+        $crate::impl_host_function!($var, read_register);
+        $crate::impl_host_function!($var, write_register);
+        $crate::impl_host_function!($var, input);
+        $crate::impl_host_function!($var, attached_deposit);
+        $crate::impl_host_function!($var, predecessor_account_id);
+        $crate::impl_host_function!($var, value_return);
+        $crate::impl_host_function!($var, panic);
+        $crate::impl_host_function!($var, panic_utf8);
+        $crate::impl_host_function!($var, storage_write);
+        $crate::impl_host_function!($var, storage_read);
+        $crate::impl_host_function!($var, storage_remove);
+        $crate::impl_host_function!($var, storage_has_key);
+        $crate::impl_host_function!($var, block_index);
+        $crate::impl_host_function!($var, block_timestamp);
+        $crate::impl_host_function!($var, epoch_height);
+        $crate::impl_host_function!($var, storage_usage);
+        $crate::impl_host_function!($var, prepaid_gas);
+        $crate::impl_host_function!($var, used_gas);
+        $crate::impl_host_function!($var, random_seed);
+        $crate::impl_host_function!($var, sha256);
+        $crate::impl_host_function!($var, keccak256);
+        $crate::impl_host_function!($var, keccak512);
+        $crate::impl_host_function!($var, ripemd160);
+        $crate::impl_host_function!($var, ecrecover);
+        $crate::impl_host_function!($var, ed25519_verify);
+        $crate::impl_host_function!($var, log_utf8);
+        $crate::impl_host_function!($var, log_utf16);
     };
 }
 

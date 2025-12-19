@@ -1,4 +1,4 @@
-#![no_main]
+#![deny(clippy::arithmetic_side_effects)]
 
 use std::collections::HashMap;
 
@@ -8,6 +8,13 @@ use intear_dex_types::{
 };
 use near_sdk::{
     AccountId, BorshStorageKey, NearToken, PanicOnDefault, json_types::U128, near, store::LookupMap,
+};
+
+#[global_allocator]
+static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
+    static mut MEMORY: [u8; 0x8000] = [0; 0x8000]; // 32KB
+    let span = talc::Span::from_array(core::ptr::addr_of!(MEMORY).cast_mut());
+    talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
 };
 
 type PoolId = u64;
@@ -61,7 +68,7 @@ impl Dex for SimpleSwap {
         struct SwapArgs {
             pool_id: PoolId,
         }
-        let Ok(SwapArgs { pool_id }) = near_sdk::borsh::from_slice(&request.message) else {
+        let Ok(SwapArgs { pool_id }) = near_sdk::borsh::from_slice(&request.message.0) else {
             panic!("Invalid message");
         };
         let Some(pool) = self.pools.get(&pool_id) else {
@@ -96,6 +103,8 @@ impl Dex for SimpleSwap {
                 } else {
                     pool.assets.0.balance.0
                 });
+                // in_balance was checked to be positive
+                #[allow(clippy::arithmetic_side_effects)]
                 let amount_out = (U256::from(amount_in.0) * out_balance
                     / (in_balance + U256::from(amount_in.0)))
                 .as_u128();
@@ -116,6 +125,12 @@ impl Dex for SimpleSwap {
                 } else {
                     pool.assets.0.balance.0
                 });
+                expect!(
+                    amount_out.0 < out_balance.as_u128(),
+                    "Amount must be less than out balance"
+                );
+                // amount_out was checked to be less than out_balance
+                #[allow(clippy::arithmetic_side_effects)]
                 let amount_in = ((in_balance * U256::from(amount_out.0))
                     / (out_balance - U256::from(amount_out.0))
                     + U256::one())
@@ -157,7 +172,10 @@ impl SimpleSwap {
         expect!(assets.0 != assets.1, "Assets must be different");
 
         let pool_id = self.pool_counter;
-        self.pool_counter += 1;
+        self.pool_counter = self
+            .pool_counter
+            .checked_add(1)
+            .expect("Pool counter overflow");
 
         let storage_usage_before = near_sdk::env::storage_usage();
         let old_pool_with_same_id = self.pools.insert(

@@ -1,16 +1,16 @@
 #![no_std]
+#![deny(clippy::arithmetic_side_effects)]
 
 extern crate alloc;
 use alloc::{vec, vec::Vec};
 use intear_dex_types::{SwapRequest, SwapRequestAmount, SwapResponse, expect};
-use talc::*;
-
-static mut ARENA: [u8; 100_000] = [0; 100_000];
 
 #[global_allocator]
-static ALLOCATOR: Talck<spin::Mutex<()>, ClaimOnOom> =
-    Talc::new(unsafe { ClaimOnOom::new(Span::from_array(core::ptr::addr_of!(ARENA).cast_mut())) })
-        .lock();
+static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
+    static mut MEMORY: [u8; 0x1000] = [0; 0x1000]; // 4KB
+    let span = talc::Span::from_array(core::ptr::addr_of!(MEMORY).cast_mut());
+    talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
+};
 
 mod sys {
     unsafe extern "C" {

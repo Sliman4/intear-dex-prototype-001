@@ -15,7 +15,7 @@ impl DexEngine {
         self.assert_has_enough(account_or_dex_id, asset_id, U128(0));
     }
 
-    pub fn transfer_assets(
+    pub fn internal_transfer_asset(
         &mut self,
         from: AccountOrDexId,
         to: AccountOrDexId,
@@ -25,8 +25,8 @@ impl DexEngine {
         if amount.0 == 0 {
             return;
         }
-        self.withdraw_assets(from, asset_id.clone(), amount);
-        self.deposit_assets(to, asset_id.clone(), amount);
+        self.internal_decrease_assets(from, asset_id.clone(), amount);
+        self.internal_increase_assets(to, asset_id.clone(), amount);
     }
 
     pub fn assert_has_enough(
@@ -57,7 +57,7 @@ impl DexEngine {
         );
     }
 
-    pub fn deposit_assets(
+    pub fn internal_increase_assets(
         &mut self,
         account_or_dex_id: AccountOrDexId,
         asset_id: AssetId,
@@ -96,7 +96,7 @@ impl DexEngine {
         }
     }
 
-    pub fn withdraw_assets(
+    pub fn internal_decrease_assets(
         &mut self,
         account_or_dex_id: AccountOrDexId,
         asset_id: AssetId,

@@ -1,8 +1,14 @@
+#![deny(clippy::arithmetic_side_effects)]
+
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 #[cfg(feature = "json")]
 use near_sdk::serde::{Deserialize, Deserializer, Serialize, Serializer};
-use near_sdk::{AccountId, NearToken, json_types::U128, near};
+use near_sdk::{
+    AccountId, NearToken,
+    json_types::{Base64VecU8, U128},
+    near,
+};
 
 /// Request for a swap operation.
 #[derive(Clone, Debug)]
@@ -11,7 +17,7 @@ use near_sdk::{AccountId, NearToken, json_types::U128, near};
 pub struct SwapRequest {
     /// Custom message to be passed to the dex. For example,
     /// it could be the pool ID or route.
-    pub message: Vec<u8>,
+    pub message: Base64VecU8,
     /// The asset the user has requested to be swapped in.
     pub asset_in: AssetId,
     /// The asset the user has requested to be swapped out.
@@ -63,10 +69,6 @@ pub enum AssetWithdrawalType {
     ToInternalUserBalance(AccountId),
     ToInternalDexBalance(DexId),
     WithdrawUnderlyingAsset(AccountId),
-    WithdrawUnderlyingAssetAndCall {
-        recipient_id: AccountId,
-        message: String,
-    },
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
@@ -82,9 +84,9 @@ impl Display for AssetId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AssetId::Near => write!(f, "near"),
-            AssetId::Nep141(account) => write!(f, "nep141:{account}"),
-            AssetId::Nep245(account, token_id) => write!(f, "nep245:{account}:{token_id}"),
-            AssetId::Nep171(account, token_id) => write!(f, "nep171:{account}:{token_id}"),
+            AssetId::Nep141(contract_id) => write!(f, "nep141:{contract_id}"),
+            AssetId::Nep245(contract_id, token_id) => write!(f, "nep245:{contract_id}:{token_id}"),
+            AssetId::Nep171(contract_id, token_id) => write!(f, "nep171:{contract_id}:{token_id}"),
         }
     }
 }
@@ -95,17 +97,17 @@ impl FromStr for AssetId {
         match s {
             "near" => Ok(AssetId::Near),
             _ => match s.split_once(':') {
-                Some(("nep141", account)) => {
-                    Ok(AssetId::Nep141(account.parse().map_err(|e| {
-                        format!("Invalid account id {account}: {e}")
+                Some(("nep141", contract_id)) => {
+                    Ok(AssetId::Nep141(contract_id.parse().map_err(|e| {
+                        format!("Invalid account id {contract_id}: {e}")
                     })?))
                 }
                 Some(("nep245", rest)) => {
-                    if let Some((account, token_id)) = rest.split_once(':') {
+                    if let Some((contract_id, token_id)) = rest.split_once(':') {
                         Ok(AssetId::Nep245(
-                            account
+                            contract_id
                                 .parse()
-                                .map_err(|e| format!("Invalid account id {account}: {e}"))?,
+                                .map_err(|e| format!("Invalid account id {contract_id}: {e}"))?,
                             token_id.to_string(),
                         ))
                     } else {
@@ -113,11 +115,11 @@ impl FromStr for AssetId {
                     }
                 }
                 Some(("nep171", rest)) => {
-                    if let Some((account, token_id)) = rest.split_once(':') {
+                    if let Some((contract_id, token_id)) = rest.split_once(':') {
                         Ok(AssetId::Nep171(
-                            account
+                            contract_id
                                 .parse()
-                                .map_err(|e| format!("Invalid account id {account}: {e}"))?,
+                                .map_err(|e| format!("Invalid account id {contract_id}: {e}"))?,
                             token_id.to_string(),
                         ))
                     } else {

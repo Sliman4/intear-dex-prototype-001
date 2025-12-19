@@ -54,8 +54,11 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         match storage_usage_after.cmp(&storage_usage_before) {
             std::cmp::Ordering::Greater => {
                 // charge the difference
-                let storage_cost = near_sdk::env::storage_byte_cost()
-                    .saturating_mul(storage_usage_after as u128 - storage_usage_before as u128);
+                let storage_cost = near_sdk::env::storage_byte_cost().saturating_mul(
+                    (storage_usage_after as u128)
+                        .checked_sub(storage_usage_before as u128)
+                        .expect("Just compared, should not be possible"),
+                );
                 let b = self.storage_balances.entry(account_id.clone()).or_default();
                 b.used = b
                     .used
@@ -68,8 +71,11 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
             }
             std::cmp::Ordering::Less => {
                 // refund the difference
-                let storage_cost = near_sdk::env::storage_byte_cost()
-                    .saturating_mul(storage_usage_before as u128 - storage_usage_after as u128);
+                let storage_cost = near_sdk::env::storage_byte_cost().saturating_mul(
+                    (storage_usage_before as u128)
+                        .checked_sub(storage_usage_after as u128)
+                        .expect("Just compared, should not be possible"),
+                );
                 let b = self.storage_balances.entry(account_id.clone()).or_default();
                 b.used = b
                     .used
@@ -88,6 +94,8 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
             .get(account_id)
             .map(|b| {
                 u64::try_from(
+                    // storage_byte_cost is non-zero
+                    #[allow(clippy::arithmetic_side_effects)]
                     b.used
                         .as_yoctonear()
                         .saturating_div(near_sdk::env::storage_byte_cost().as_yoctonear()),
@@ -128,8 +136,13 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
             });
         self.storage_balances.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
-        let storage_cost = near_sdk::env::storage_byte_cost()
-            .saturating_mul(storage_usage_after as u128 - storage_usage_before as u128);
+        let storage_cost = near_sdk::env::storage_byte_cost().saturating_mul(
+            (storage_usage_after as u128)
+                .checked_sub(storage_usage_before as u128)
+                .expect(
+                    "Storage somehow shrank after insertion / modification of constant-sized data",
+                ),
+        );
         let balance = *self
             .storage_balances
             .entry(account_id)
@@ -175,8 +188,11 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         };
         self.storage_balances.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
-        let storage_freed = near_sdk::env::storage_byte_cost()
-            .saturating_mul(storage_usage_before as u128 - storage_usage_after as u128);
+        let storage_freed = near_sdk::env::storage_byte_cost().saturating_mul(
+            (storage_usage_before as u128)
+                .checked_sub(storage_usage_after as u128)
+                .expect("Storage somehow grew after removing data"),
+        );
         if let Some(leftover) = storage_used.used.checked_sub(storage_freed) {
             panic!("User is using {leftover} worth of storage")
         } else {
