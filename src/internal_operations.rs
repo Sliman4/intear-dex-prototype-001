@@ -8,7 +8,7 @@ use near_contract_standards::{
     fungible_token::core::ext_ft_core, non_fungible_token::core::ext_nft_core,
 };
 use near_sdk::{
-    AccountId, Gas, NearToken, Promise, PromiseError,
+    AccountId, Gas, NearToken, Promise, PromiseError, PromiseOrValue,
     json_types::{Base58CryptoHash, Base64VecU8, U128},
     near,
 };
@@ -18,6 +18,23 @@ use crate::{
     CallType, DexEngine, DexEngineExt, IntearDexEvent, RunnerData, impl_supported_host_functions,
     impl_unsupported_host_functions, internal_asset_operations::AccountOrDexId,
 };
+
+#[derive(Clone)]
+#[cfg_attr(debug_assertions, derive(Debug))]
+#[near(serializers=[json])]
+pub enum SwapOperationAmount {
+    Amount(SwapRequestAmount),
+    OutputOfLastIn,
+    EntireBalanceIn,
+}
+
+pub enum TradeAccount<'a> {
+    User(AccountId),
+    Sandboxed {
+        assets: &'a mut HashMap<AssetId, U128>,
+        alleged_trader: AccountId,
+    },
+}
 
 #[derive(Clone)]
 #[cfg_attr(debug_assertions, derive(Debug))]
@@ -41,6 +58,11 @@ pub enum Operation {
         asset_id: AssetId,
         amount: Option<U128>,
         to: Option<AccountId>,
+        /// If the withdrawal fails and current user doesn't have
+        /// a registerd balance in this asset, the assets will be
+        /// refunded to this address. It's required that either
+        /// the user address or rescue address is registered.
+        rescue_address: Option<AccountId>,
     },
     /// Swap assets between two assets on the selected dex.
     SwapSimple {
@@ -48,9 +70,7 @@ pub enum Operation {
         message: Base64VecU8,
         asset_in: AssetId,
         asset_out: AssetId,
-        /// If None, the ExactIn amount will be taken from
-        /// the previous swap operation result.
-        amount: Option<SwapRequestAmount>,
+        amount: SwapOperationAmount,
     },
     /// Call a method on a dex.
     DexCall {
@@ -64,6 +84,12 @@ pub enum Operation {
         to: AccountOrDexId,
         asset_id: AssetId,
         amount: U128,
+    },
+    /// Convert some of AssetId::Near to storage for an account
+    /// or a dex.
+    StorageDeposit {
+        amount: U128,
+        r#for: Option<AccountOrDexId>,
     },
 }
 
@@ -100,7 +126,7 @@ impl DexEngine {
         asset_in: AssetId,
         asset_out: AssetId,
         amount: SwapRequestAmount,
-        trader: AccountId,
+        mut trader: TradeAccount,
     ) -> (U128, U128) {
         let swap_request = SwapRequest {
             message,
@@ -124,9 +150,8 @@ impl DexEngine {
                     .expect("Failed to serialize swap request"),
                 response: None,
                 registers: HashMap::new(),
-                call_type: CallType::Call {
+                call_type: CallType::Trade {
                     dex_storage_mut: &mut self.dex_storage,
-                    predecessor_id: trader.clone(),
                 },
                 dex_id: dex_id.clone(),
                 dex_storage_balances: &self.dex_storage_balances,
@@ -177,25 +202,60 @@ impl DexEngine {
             }
         }
 
-        self.internal_transfer_asset(
-            AccountOrDexId::Account(trader.clone()),
-            AccountOrDexId::Dex(dex_id.clone()),
-            swap_request.asset_in.clone(),
-            response.amount_in,
-        );
-        self.internal_transfer_asset(
-            AccountOrDexId::Dex(dex_id.clone()),
-            AccountOrDexId::Account(trader.clone()),
-            swap_request.asset_out.clone(),
-            response.amount_out,
-        );
-
+        match &mut trader {
+            TradeAccount::User(user_trader) => {
+                // asset in
+                self.internal_transfer_asset(
+                    AccountOrDexId::Account(user_trader.clone()),
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    swap_request.asset_in.clone(),
+                    response.amount_in,
+                );
+                // asset out
+                self.internal_transfer_asset(
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    AccountOrDexId::Account(user_trader.clone()),
+                    swap_request.asset_out.clone(),
+                    response.amount_out,
+                );
+            }
+            TradeAccount::Sandboxed { assets, .. } => {
+                // asset in
+                let anon_swap_balance_in = assets
+                    .get_mut(&swap_request.asset_in)
+                    .expect("Asset in not found in anonymous assets");
+                anon_swap_balance_in.0 = anon_swap_balance_in
+                    .0
+                    .checked_sub(response.amount_in.0)
+                    .expect("Not enough input balance in anonymous assets");
+                self.internal_increase_assets(
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    swap_request.asset_in.clone(),
+                    response.amount_in,
+                );
+                // asset out
+                self.internal_decrease_assets(
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    swap_request.asset_out.clone(),
+                    response.amount_out,
+                );
+                let anon_swap_balance_out =
+                    assets.entry(swap_request.asset_out.clone()).or_default();
+                anon_swap_balance_out.0 = anon_swap_balance_out
+                    .0
+                    .checked_add(response.amount_out.0)
+                    .expect("Balance overflow");
+            }
+        }
         IntearDexEvent::Swap {
             dex_id: dex_id.clone(),
             request: swap_request.clone(),
             amount_in: response.amount_in,
             amount_out: response.amount_out,
-            trader: trader.clone(),
+            trader: match trader {
+                TradeAccount::User(account) => account,
+                TradeAccount::Sandboxed { alleged_trader, .. } => alleged_trader,
+            },
         }
         .emit();
 
@@ -398,9 +458,9 @@ impl DexEngine {
         &mut self,
         asset_ids: Vec<AssetId>,
         r#for: Option<AccountOrDexId>,
-        predecessor: AccountId,
+        storage_payer: AccountId,
     ) {
-        let r#for = r#for.unwrap_or_else(|| AccountOrDexId::Account(predecessor.clone()));
+        let r#for = r#for.unwrap_or_else(|| AccountOrDexId::Account(storage_payer.clone()));
         let storage_usage_before = near_sdk::env::storage_usage();
         for asset_id in asset_ids {
             match r#for.clone() {
@@ -433,8 +493,11 @@ impl DexEngine {
         self.dex_balances.flush();
         self.total_in_custody.flush();
         let storage_usage_after = near_sdk::env::storage_usage();
-        self.user_storage_balances
-            .charge(&predecessor, storage_usage_before, storage_usage_after);
+        self.user_storage_balances.charge(
+            &storage_payer,
+            storage_usage_before,
+            storage_usage_after,
+        );
     }
 
     pub(crate) fn internal_withdraw(
@@ -443,18 +506,13 @@ impl DexEngine {
         amount: Option<U128>,
         withdraw_to: Option<AccountId>,
         withdraw_from: AccountOrDexId,
-    ) -> Promise {
-        const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
-        const GAS_FOR_NFT_TRANSFER: Gas = Gas::from_tgas(10);
-        const GAS_FOR_MT_TRANSFER: Gas = Gas::from_tgas(10);
-        const GAS_FOR_WITHDRAWAL_CALLBACK: Gas = Gas::from_tgas(5);
-
+    ) -> PromiseOrValue<bool> {
         let amount = amount.unwrap_or_else(|| {
             self.asset_balance_of(withdraw_from.clone(), asset_id.clone())
                 .unwrap_or_default()
         });
         if amount.0 == 0 {
-            panic!("Withdrawal amount is zero");
+            return PromiseOrValue::Value(true);
         }
         self.internal_decrease_assets(withdraw_from.clone(), asset_id.clone(), amount);
         self.total_in_custody
@@ -462,7 +520,7 @@ impl DexEngine {
             .and_modify(|b| {
                 b.0 = b.0.checked_sub(amount.0).unwrap_or_else(|| {
                     panic!(
-                        "Balance underflow for contract and asset Near: {} - {} < {}",
+                        "Balance underflow for contract and asset {asset_id}: {} - {} < {}",
                         b.0,
                         amount.0,
                         u128::MIN,
@@ -471,7 +529,7 @@ impl DexEngine {
             })
             .or_insert_with(|| {
                 panic!(
-                    "Failed to withdraw assets from contract tracked balance: asset not registered"
+                    "Failed to withdraw assets from contract tracked balance: asset {asset_id} not registered"
                 )
             });
 
@@ -481,7 +539,23 @@ impl DexEngine {
                 panic!("withdraw_to must be present when withdrawing from a dex")
             }
         });
-        match &asset_id {
+        self.internal_withdraw_unchecked(asset_id, amount, withdraw_to, withdraw_from)
+    }
+
+    /// Withdraws assets without reducing or checking any balances.
+    fn internal_withdraw_unchecked(
+        &mut self,
+        asset_id: AssetId,
+        amount: U128,
+        withdraw_to: AccountId,
+        withdraw_from: AccountOrDexId,
+    ) -> PromiseOrValue<bool> {
+        const GAS_FOR_FT_TRANSFER: Gas = Gas::from_tgas(10);
+        const GAS_FOR_NFT_TRANSFER: Gas = Gas::from_tgas(10);
+        const GAS_FOR_MT_TRANSFER: Gas = Gas::from_tgas(10);
+        const GAS_FOR_WITHDRAWAL_CALLBACK: Gas = Gas::from_tgas(5);
+
+        PromiseOrValue::Promise(match &asset_id {
             AssetId::Near => Promise::new(withdraw_to.clone())
                 .transfer(NearToken::from_yoctonear(amount.0))
                 .then(
@@ -527,38 +601,99 @@ impl DexEngine {
                         .with_static_gas(GAS_FOR_WITHDRAWAL_CALLBACK)
                         .after_withdraw(asset_id, amount, withdraw_to, withdraw_from),
                 ),
-        }
+        })
     }
 
     pub(crate) fn internal_execute_operations(
         &mut self,
         operations: Vec<Operation>,
         by: AccountId,
+        mut anon_swap_available_assets: Option<HashMap<AssetId, U128>>,
     ) {
+        let fully_authorized = anon_swap_available_assets.as_ref().is_none();
+        near_sdk::env::log_str(&format!("Fully authorized: {fully_authorized}"));
         let mut last_output = None;
         for operation in operations {
             match operation {
                 Operation::RegisterAssets { asset_ids, r#for } => {
+                    if !fully_authorized {
+                        panic!("Operation only available in execute_actions");
+                    }
                     self.internal_register_assets(asset_ids, r#for, by.clone());
                 }
                 Operation::DeployDexCode {
                     last_part_of_id,
                     code_base64,
                 } => {
+                    if !fully_authorized {
+                        panic!("Operation only available in execute_actions");
+                    }
                     self.internal_deploy_dex_code(last_part_of_id, code_base64, by.clone());
                 }
                 Operation::Withdraw {
                     asset_id,
                     amount,
                     to,
+                    rescue_address,
                 } => {
-                    self.internal_withdraw(
-                        asset_id,
-                        amount,
-                        to,
-                        AccountOrDexId::Account(by.clone()),
-                    )
-                    .detach();
+                    if let Some(anonymous_assets) = &mut anon_swap_available_assets {
+                        let asset_balance = anonymous_assets
+                            .get_mut(&asset_id)
+                            .expect("Asset to withdraw not found in anonymous assets");
+                        let amount = amount.unwrap_or(*asset_balance);
+                        asset_balance.0 = asset_balance
+                            .0
+                            .checked_sub(amount.0)
+                            .expect("Not enough balance in anonymous assets");
+                        let rescue_address = if self.asset_is_registered(
+                            AccountOrDexId::Account(by.clone()),
+                            asset_id.clone(),
+                        ) {
+                            by.clone()
+                        } else if let Some(rescue_address) = rescue_address {
+                            self.assert_asset_registered(
+                                AccountOrDexId::Account(rescue_address.clone()),
+                                asset_id.clone(),
+                            );
+                            rescue_address.clone()
+                        } else {
+                            panic!(
+                                "No rescue address provided and user doesn't have a registered balance for this asset"
+                            );
+                        };
+                        self.total_in_custody
+                            .entry(asset_id.clone())
+                            .and_modify(|b| {
+                                b.0 = b.0.checked_sub(amount.0).unwrap_or_else(|| {
+                                    panic!(
+                                        "Balance underflow for contract and asset {asset_id}: {} - {} < {}",
+                                        b.0,
+                                        amount.0,
+                                        u128::MIN,
+                                    )
+                                })
+                            })
+                            .or_insert_with(|| {
+                                panic!(
+                                    "Failed to withdraw assets from contract tracked balance: asset not registered"
+                                )
+                            });
+                        self.internal_withdraw_unchecked(
+                            asset_id,
+                            amount,
+                            by.clone(),
+                            AccountOrDexId::Account(rescue_address.clone()),
+                        )
+                        .detach();
+                    } else {
+                        self.internal_withdraw(
+                            asset_id,
+                            amount,
+                            to,
+                            AccountOrDexId::Account(by.clone()),
+                        )
+                        .detach();
+                    }
                 }
                 Operation::SwapSimple {
                     dex_id,
@@ -568,8 +703,8 @@ impl DexEngine {
                     amount,
                 } => {
                     let amount = match amount {
-                        Some(amount) => amount,
-                        None => match last_output {
+                        SwapOperationAmount::Amount(amount) => amount,
+                        SwapOperationAmount::OutputOfLastIn => match last_output {
                             Some((last_asset_out, amount)) => {
                                 if last_asset_out == asset_in {
                                     SwapRequestAmount::ExactIn(amount)
@@ -581,6 +716,19 @@ impl DexEngine {
                             }
                             None => panic!("Amount is required for first SwapSimple operation"),
                         },
+                        SwapOperationAmount::EntireBalanceIn => {
+                            SwapRequestAmount::ExactIn(match &anon_swap_available_assets {
+                                Some(assets) => *assets
+                                    .get(&asset_in)
+                                    .expect("Asset in not found in anonymous assets"),
+                                None => self
+                                    .asset_balance_of(
+                                        AccountOrDexId::Account(by.clone()),
+                                        asset_in.clone(),
+                                    )
+                                    .unwrap_or_default(),
+                            })
+                        }
                     };
                     let (_amount_in, amount_out) = self.internal_swap_simple(
                         dex_id,
@@ -588,7 +736,13 @@ impl DexEngine {
                         asset_in,
                         asset_out.clone(),
                         amount,
-                        by.clone(),
+                        match &mut anon_swap_available_assets {
+                            Some(assets) => TradeAccount::Sandboxed {
+                                assets,
+                                alleged_trader: by.clone(),
+                            },
+                            None => TradeAccount::User(by.clone()),
+                        },
                     );
                     last_output = Some((asset_out, amount_out));
                 }
@@ -598,21 +752,72 @@ impl DexEngine {
                     args,
                     attached_assets,
                 } => {
+                    if !fully_authorized {
+                        panic!("Operation only available in execute_actions");
+                    }
                     self.internal_dex_call(dex_id, method, args, attached_assets, by.clone());
                 }
                 Operation::TransferAsset {
                     to,
                     asset_id,
                     amount,
-                } => {
-                    self.internal_transfer_asset(
-                        AccountOrDexId::Account(by.clone()),
-                        to,
-                        asset_id,
-                        amount,
-                    );
+                } => match &mut anon_swap_available_assets {
+                    Some(assets) => {
+                        let asset_balance = assets
+                            .get_mut(&asset_id)
+                            .expect("Asset to transfer not found in anonymous assets");
+                        asset_balance.0 = asset_balance
+                            .0
+                            .checked_sub(amount.0)
+                            .expect("Not enough balance in anonymous assets");
+                        self.internal_increase_assets(to, asset_id, amount);
+                    }
+                    None => {
+                        self.internal_transfer_asset(
+                            AccountOrDexId::Account(by.clone()),
+                            to,
+                            asset_id,
+                            amount,
+                        );
+                    }
+                },
+                Operation::StorageDeposit { amount, r#for } => {
+                    if let Some(sandboxed_assets) = &mut anon_swap_available_assets {
+                        let near_balance = sandboxed_assets
+                            .get_mut(&AssetId::Near)
+                            .expect("Near balance not found in anonymous assets");
+                        near_balance.0 = near_balance
+                            .0
+                            .checked_sub(amount.0)
+                            .expect("Not enough near balance in anonymous assets");
+                    }
+                    match r#for {
+                        Some(AccountOrDexId::Account(account)) => {
+                            self.user_storage_balances.storage_deposit(
+                                account,
+                                Some(false),
+                                NearToken::from_yoctonear(amount.0),
+                            );
+                        }
+                        Some(AccountOrDexId::Dex(dex_id)) => {
+                            self.dex_storage_balances.storage_deposit(
+                                dex_id,
+                                Some(false),
+                                NearToken::from_yoctonear(amount.0),
+                            );
+                        }
+                        None => {
+                            panic!("r#for is required for StorageDeposit operation");
+                        }
+                    }
                 }
             }
+        }
+        for (asset_id, amount) in anon_swap_available_assets.unwrap_or_default() {
+            expect!(
+                amount.0 == 0,
+                "Sandboxed assets must be empty after execution. Did you forget to withdraw {asset_id}?"
+            );
         }
     }
 }

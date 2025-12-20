@@ -387,10 +387,7 @@ pub fn storage_write(
         .read(&caller, value_ptr as usize, &mut value_buf)
         .expect("Failed to read value from guest memory");
 
-    let CallType::Call {
-        dex_storage_mut, ..
-    } = &mut caller.data_mut().call_type
-    else {
+    let Some(dex_storage_mut) = caller.data_mut().call_type.dex_storage_mut() else {
         panic!("storage_write is not allowed in view functions");
     };
     let old_value = dex_storage_mut.insert((dex_id, key_buf), value_buf);
@@ -449,10 +446,7 @@ pub fn storage_remove(
         .read(&caller, key_ptr as usize, &mut key_buf)
         .expect("Failed to read key from guest memory");
 
-    let CallType::Call {
-        dex_storage_mut, ..
-    } = &mut caller.data_mut().call_type
-    else {
+    let Some(dex_storage_mut) = caller.data_mut().call_type.dex_storage_mut() else {
         panic!("storage_write is not allowed in view functions");
     };
     if let Some(old_value) = dex_storage_mut.remove(&(dex_id, key_buf)) {
@@ -499,10 +493,7 @@ pub fn epoch_height(_caller: Caller<'_, RunnerData>) -> u64 {
 }
 
 pub fn storage_usage(mut caller: Caller<'_, RunnerData>) -> u64 {
-    if let CallType::Call {
-        dex_storage_mut, ..
-    } = &mut caller.data_mut().call_type
-    {
+    if let Some(dex_storage_mut) = caller.data_mut().call_type.dex_storage_mut() {
         dex_storage_mut.flush();
     };
     let storage_usage_now = near_sdk::env::storage_usage();

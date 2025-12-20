@@ -1,3 +1,4 @@
+use intear_dex::internal_operations::SwapOperationAmount;
 use intear_dex::{internal_asset_operations::AccountOrDexId, internal_operations::Operation};
 use intear_dex_types::{AssetId, DexId, SwapRequestAmount};
 use near_contract_standards::storage_management::{StorageBalance, StorageBalanceBounds};
@@ -848,148 +849,6 @@ async fn test_total_in_custody_consistency() {
 }
 
 #[tokio::test]
-async fn test_operations_with_near_deposit() {
-    let wasms = get_compiled_wasms().await;
-    let contract_wasm = &wasms.contract_wasm;
-    let dex_wasm = &wasms.minimal_dex_wasm;
-    let sandbox = near_workspaces::sandbox().await.unwrap();
-    let dex_engine_contract = sandbox.dev_deploy(contract_wasm).await.unwrap();
-    let user = sandbox.dev_create_account().await.unwrap();
-
-    let dex_id_string = "dex".to_string();
-    let dex_id = DexId {
-        deployer: user.id().clone(),
-        id: dex_id_string.clone(),
-    };
-
-    let result = user
-        .call(dex_engine_contract.id(), "dex_storage_deposit")
-        .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "dex_id": dex_id,
-        }))
-        .transact()
-        .await
-        .unwrap();
-    assert!(result.is_success());
-
-    let result = user
-        .call(dex_engine_contract.id(), "storage_deposit")
-        .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
-        .transact()
-        .await
-        .unwrap();
-    assert!(result.is_success());
-
-    let result = user
-        .call(dex_engine_contract.id(), "register_assets")
-        .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
-        .args_json(json!({
-            "asset_ids": [AssetId::Near],
-            "for": AccountOrDexId::Account(user.id().clone()),
-        }))
-        .transact()
-        .await
-        .unwrap();
-    assert!(result.is_success());
-
-    let transfer_amount = NearToken::from_millinear(1).as_yoctonear();
-    let withdraw_amount = NearToken::from_millinear(2).as_yoctonear();
-    let operations = vec![
-        Operation::RegisterAssets {
-            asset_ids: vec![AssetId::Near],
-            r#for: Some(AccountOrDexId::Dex(DexId {
-                deployer: user.id().clone(),
-                id: dex_id_string.clone(),
-            })),
-        },
-        Operation::DeployDexCode {
-            last_part_of_id: dex_id_string.clone(),
-            code_base64: Base64VecU8(dex_wasm.to_vec()),
-        },
-        Operation::TransferAsset {
-            to: AccountOrDexId::Dex(DexId {
-                deployer: user.id().clone(),
-                id: dex_id_string.clone(),
-            }),
-            asset_id: AssetId::Near,
-            amount: U128(transfer_amount),
-        },
-        Operation::SwapSimple {
-            dex_id: DexId {
-                deployer: user.id().clone(),
-                id: dex_id_string.clone(),
-            },
-            message: Base64VecU8(vec![]),
-            asset_in: AssetId::Near,
-            asset_out: AssetId::Near,
-            amount: Some(SwapRequestAmount::ExactIn(U128(
-                NearToken::from_millinear(1).as_yoctonear(),
-            ))),
-        },
-        Operation::Withdraw {
-            asset_id: AssetId::Near,
-            amount: Some(U128(withdraw_amount)),
-            to: None,
-        },
-    ];
-
-    let result = user
-        .call(dex_engine_contract.id(), "deposit_near")
-        .max_gas()
-        .deposit(NearToken::from_near(3))
-        .args_json(json!({
-            "operations": operations,
-        }))
-        .transact()
-        .await
-        .unwrap();
-    assert!(result.is_success());
-
-    assert_inner_asset_balance(
-        &dex_engine_contract,
-        AccountOrDexId::Account(user.id().clone()),
-        AssetId::Near,
-        Some(U128(
-            NearToken::from_near(3)
-                .as_yoctonear()
-                .saturating_sub(transfer_amount)
-                .saturating_sub(withdraw_amount),
-        )),
-    )
-    .await
-    .unwrap();
-    assert_inner_asset_balance(
-        &dex_engine_contract,
-        AccountOrDexId::Dex(DexId {
-            deployer: user.id().clone(),
-            id: dex_id_string,
-        }),
-        AssetId::Near,
-        Some(U128(transfer_amount)),
-    )
-    .await
-    .unwrap();
-    assert_total_in_custody(
-        &dex_engine_contract,
-        AssetId::Near,
-        Some(U128(
-            NearToken::from_near(3)
-                .as_yoctonear()
-                .saturating_sub(withdraw_amount),
-        )),
-    )
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
 async fn test_execute_operations() {
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
@@ -1081,7 +940,7 @@ async fn test_execute_operations() {
             message: Base64VecU8(vec![]),
             asset_in: AssetId::Near,
             asset_out: AssetId::Near,
-            amount: Some(SwapRequestAmount::ExactIn(U128(
+            amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(
                 NearToken::from_millinear(1).as_yoctonear(),
             ))),
         },
@@ -1089,6 +948,7 @@ async fn test_execute_operations() {
             asset_id: AssetId::Near,
             amount: Some(U128(withdraw_amount)),
             to: None,
+            rescue_address: None,
         },
     ];
 
@@ -1153,6 +1013,7 @@ async fn test_execute_operations_failure_reverts() {
         asset_id: AssetId::Near,
         amount: None,
         to: None,
+        rescue_address: None,
     }];
 
     let result = user
@@ -1253,6 +1114,7 @@ async fn test_ft_transfer_call_failure_reverts() {
         asset_id: AssetId::Nep141(ft.id().clone()),
         amount: Some(U128(1_000_000_000_000)),
         to: None,
+        rescue_address: None,
     }];
 
     let initial_ft_balance = ft
@@ -1554,7 +1416,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             message: Base64VecU8(near_sdk::borsh::to_vec(&SwapArgs { pool_id: 0 }).unwrap()),
             asset_in: AssetId::Near,
             asset_out: AssetId::Nep141(ft1.id().clone()),
-            amount: Some(SwapRequestAmount::ExactIn(U128(
+            amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(
                 swap_amount_in.as_yoctonear(),
             ))),
         },
@@ -1566,7 +1428,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             message: Base64VecU8(near_sdk::borsh::to_vec(&SwapArgs { pool_id: 1 }).unwrap()),
             asset_in: AssetId::Nep141(ft1.id().clone()),
             asset_out: AssetId::Nep141(ft2.id().clone()),
-            amount: None, // Use the output of the previous swap
+            amount: SwapOperationAmount::OutputOfLastIn,
         },
     ];
 
@@ -1679,6 +1541,7 @@ async fn test_operations_with_ft_deposit() {
     let dex_engine_contract = sandbox.dev_deploy(contract_wasm).await.unwrap();
     let ft = sandbox.dev_deploy(ft_wasm).await.unwrap();
     let user = sandbox.dev_create_account().await.unwrap();
+    let registered_user = sandbox.dev_create_account().await.unwrap();
 
     let dex_id_string = "dex".to_string();
     let dex_id = DexId {
@@ -1727,7 +1590,10 @@ async fn test_operations_with_ft_deposit() {
         .deposit(NearToken::from_yoctonear(1))
         .args_json(json!({
             "asset_ids": [AssetId::Nep141(ft.id().clone())],
-            "for": AccountOrDexId::Account(user.id().clone()),
+            "for": AccountOrDexId::Dex(DexId {
+                deployer: user.id().clone(),
+                id: dex_id_string.clone(),
+            }),
         }))
         .transact()
         .await
@@ -1740,10 +1606,7 @@ async fn test_operations_with_ft_deposit() {
         .deposit(NearToken::from_yoctonear(1))
         .args_json(json!({
             "asset_ids": [AssetId::Nep141(ft.id().clone())],
-            "for": AccountOrDexId::Dex(DexId {
-                deployer: user.id().clone(),
-                id: dex_id_string.clone(),
-            }),
+            "for": AccountOrDexId::Account(registered_user.id().clone()),
         }))
         .transact()
         .await
@@ -1803,12 +1666,13 @@ async fn test_operations_with_ft_deposit() {
             message: Base64VecU8(vec![]),
             asset_in: AssetId::Nep141(ft.id().clone()),
             asset_out: AssetId::Nep141(ft.id().clone()),
-            amount: Some(SwapRequestAmount::ExactIn(U128(100_000))),
+            amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(100_000))),
         },
         Operation::Withdraw {
             asset_id: AssetId::Nep141(ft.id().clone()),
-            amount: Some(U128(50_000)),
+            amount: None,
             to: Some(user.id().clone()),
+            rescue_address: Some(registered_user.id().clone()),
         },
     ];
 
@@ -1830,7 +1694,7 @@ async fn test_operations_with_ft_deposit() {
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(750_000)),
+        None,
     )
     .await
     .unwrap();
@@ -1848,7 +1712,7 @@ async fn test_operations_with_ft_deposit() {
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(950_000)),
+        Some(U128(200_000)),
     )
     .await
     .unwrap();

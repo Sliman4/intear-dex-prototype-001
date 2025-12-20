@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use intear_dex_types::{AssetId, expect};
 use near_contract_standards::{
     fungible_token::receiver::FungibleTokenReceiver,
@@ -17,11 +19,6 @@ impl DexEngine {
     /// balance for the user.
     pub fn deposit_near(&mut self, operations: Option<Vec<Operation>>) {
         let deposit = U128(near_sdk::env::attached_deposit().as_yoctonear());
-        self.internal_increase_assets(
-            AccountOrDexId::Account(near_sdk::env::predecessor_account_id()),
-            AssetId::Near,
-            U128(near_sdk::env::attached_deposit().as_yoctonear()),
-        );
         self.total_in_custody
             .entry(AssetId::Near)
             .and_modify(|b| {
@@ -38,15 +35,24 @@ impl DexEngine {
                 panic!("Failed to deposit assets to contract tracked balance: asset not registered")
             });
 
-        IntearDexEvent::UserDeposit {
-            account_id: near_sdk::env::predecessor_account_id(),
-            asset_id: AssetId::Near,
-            amount: deposit,
-        }
-        .emit();
-
         if let Some(operations) = operations {
-            self.internal_execute_operations(operations, near_sdk::env::predecessor_account_id());
+            self.internal_execute_operations(
+                operations,
+                near_sdk::env::predecessor_account_id(),
+                Some(HashMap::from_iter([(AssetId::Near, deposit)])),
+            );
+        } else {
+            self.internal_increase_assets(
+                AccountOrDexId::Account(near_sdk::env::predecessor_account_id()),
+                AssetId::Near,
+                U128(near_sdk::env::attached_deposit().as_yoctonear()),
+            );
+            IntearDexEvent::UserDeposit {
+                account_id: near_sdk::env::predecessor_account_id(),
+                asset_id: AssetId::Near,
+                amount: deposit,
+            }
+            .emit();
         }
     }
 }
@@ -63,17 +69,9 @@ impl FungibleTokenReceiver for DexEngine {
         let operations: Option<Vec<Operation>> = if msg.is_empty() {
             None
         } else {
-            if sender_id != near_sdk::env::signer_account_id() {
-                panic!("Operations can only be executed if the sender is the transaction signer");
-            }
             Some(near_sdk::serde_json::from_str(&msg).expect("Failed to parse operations"))
         };
 
-        self.internal_increase_assets(
-            AccountOrDexId::Account(sender_id.clone()),
-            AssetId::Nep141(contract_id.clone()),
-            amount,
-        );
         self.total_in_custody
             .entry(AssetId::Nep141(contract_id.clone()))
             .and_modify(|b| {
@@ -90,15 +88,24 @@ impl FungibleTokenReceiver for DexEngine {
                 panic!("Failed to deposit assets to contract tracked balance: asset not registered")
             });
 
-        IntearDexEvent::UserDeposit {
-            account_id: sender_id.clone(),
-            asset_id: AssetId::Nep141(contract_id),
-            amount,
-        }
-        .emit();
-
         if let Some(operations) = operations {
-            self.internal_execute_operations(operations, sender_id.clone());
+            self.internal_execute_operations(
+                operations,
+                sender_id.clone(),
+                Some(HashMap::from_iter([(AssetId::Nep141(contract_id), amount)])),
+            );
+        } else {
+            self.internal_increase_assets(
+                AccountOrDexId::Account(sender_id.clone()),
+                AssetId::Nep141(contract_id.clone()),
+                amount,
+            );
+            IntearDexEvent::UserDeposit {
+                account_id: sender_id.clone(),
+                asset_id: AssetId::Nep141(contract_id.clone()),
+                amount,
+            }
+            .emit();
         }
 
         PromiseOrValue::Value(U128(0))
@@ -123,17 +130,9 @@ impl NonFungibleTokenReceiver for DexEngine {
                     "Only the previous owner can execute operations on behalf of the previous owner"
                 );
             }
-            if sender_id != near_sdk::env::signer_account_id() {
-                panic!("Operations can only be executed if the sender is the transaction signer");
-            }
             Some(near_sdk::serde_json::from_str(&msg).expect("Failed to parse operations"))
         };
 
-        self.internal_increase_assets(
-            AccountOrDexId::Account(previous_owner_id.clone()),
-            AssetId::Nep171(contract_id.clone(), token_id.to_string()),
-            U128(1),
-        );
         self.total_in_custody
             .entry(AssetId::Nep171(contract_id.clone(), token_id.to_string()))
             .and_modify(|b| {
@@ -149,15 +148,27 @@ impl NonFungibleTokenReceiver for DexEngine {
                 panic!("Failed to deposit assets to contract tracked balance: asset not registered")
             });
 
-        IntearDexEvent::UserDeposit {
-            account_id: previous_owner_id.clone(),
-            asset_id: AssetId::Nep171(contract_id, token_id.to_string()),
-            amount: U128(1),
-        }
-        .emit();
-
         if let Some(operations) = operations {
-            self.internal_execute_operations(operations, previous_owner_id.clone());
+            self.internal_execute_operations(
+                operations,
+                previous_owner_id.clone(),
+                Some(HashMap::from_iter([(
+                    AssetId::Nep171(contract_id, token_id.to_string()),
+                    U128(1),
+                )])),
+            );
+        } else {
+            self.internal_increase_assets(
+                AccountOrDexId::Account(previous_owner_id.clone()),
+                AssetId::Nep171(contract_id.clone(), token_id.to_string()),
+                U128(1),
+            );
+            IntearDexEvent::UserDeposit {
+                account_id: previous_owner_id.clone(),
+                asset_id: AssetId::Nep171(contract_id.clone(), token_id.to_string()),
+                amount: U128(1),
+            }
+            .emit();
         }
 
         PromiseOrValue::Value(false)
@@ -193,22 +204,10 @@ impl DexEngine {
                     );
                 }
             }
-            if sender_id != near_sdk::env::signer_account_id() {
-                panic!("Operations can only be executed if the sender is the transaction signer");
-            }
             Some(near_sdk::serde_json::from_str(&msg).expect("Failed to parse operations"))
         };
 
-        for ((token_id, previous_owner_id), amount) in token_ids
-            .iter()
-            .zip(previous_owner_ids.iter())
-            .zip(amounts.iter())
-        {
-            self.internal_increase_assets(
-                AccountOrDexId::Account(previous_owner_id.clone()),
-                AssetId::Nep245(contract_id.clone(), token_id.clone()),
-                *amount,
-            );
+        for (token_id, amount) in token_ids.iter().zip(amounts.iter()) {
             self.total_in_custody
                 .entry(AssetId::Nep245(contract_id.clone(), token_id.clone()))
                 .and_modify(|b| {
@@ -226,17 +225,42 @@ impl DexEngine {
                         "Failed to deposit assets to contract tracked balance: asset not registered"
                     )
                 });
-
-            IntearDexEvent::UserDeposit {
-                account_id: previous_owner_id.clone(),
-                asset_id: AssetId::Nep245(contract_id.clone(), token_id.clone()),
-                amount: *amount,
-            }
-            .emit();
         }
 
         if let Some(operations) = operations {
-            self.internal_execute_operations(operations, sender_id.clone());
+            self.internal_execute_operations(
+                operations,
+                sender_id.clone(),
+                Some(HashMap::from_iter(
+                    token_ids
+                        .iter()
+                        .zip(amounts.iter())
+                        .map(|(token_id, amount)| {
+                            (
+                                AssetId::Nep245(contract_id.clone(), token_id.clone()),
+                                *amount,
+                            )
+                        }),
+                )),
+            );
+        } else {
+            for ((token_id, previous_owner_id), amount) in token_ids
+                .iter()
+                .zip(previous_owner_ids.iter())
+                .zip(amounts.iter())
+            {
+                self.internal_increase_assets(
+                    AccountOrDexId::Account(previous_owner_id.clone()),
+                    AssetId::Nep245(contract_id.clone(), token_id.clone()),
+                    *amount,
+                );
+                IntearDexEvent::UserDeposit {
+                    account_id: previous_owner_id.clone(),
+                    asset_id: AssetId::Nep245(contract_id.clone(), token_id.clone()),
+                    amount: *amount,
+                }
+                .emit();
+            }
         }
 
         PromiseOrValue::Value(vec![])

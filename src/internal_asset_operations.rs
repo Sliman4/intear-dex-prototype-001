@@ -24,7 +24,23 @@ impl Display for AccountOrDexId {
 
 impl DexEngine {
     pub fn assert_asset_registered(&self, account_or_dex_id: AccountOrDexId, asset_id: AssetId) {
-        self.assert_has_enough(account_or_dex_id, asset_id, U128(0));
+        expect!(
+            self.asset_is_registered(account_or_dex_id.clone(), asset_id.clone()),
+            "Asset {asset_id} is not registered for {account_or_dex_id}"
+        );
+    }
+
+    pub fn asset_is_registered(
+        &self,
+        account_or_dex_id: AccountOrDexId,
+        asset_id: AssetId,
+    ) -> bool {
+        match account_or_dex_id {
+            AccountOrDexId::Account(account) => {
+                self.user_balances.contains_key(&(account, asset_id))
+            }
+            AccountOrDexId::Dex(dex_id) => self.dex_balances.contains_key(&(dex_id, asset_id)),
+        }
     }
 
     pub fn internal_transfer_asset(

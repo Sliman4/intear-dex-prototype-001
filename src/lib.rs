@@ -9,12 +9,13 @@ pub mod storage_management;
 use std::collections::HashMap;
 
 use crate::{
-    internal_asset_operations::AccountOrDexId, internal_operations::Operation,
+    internal_asset_operations::AccountOrDexId,
+    internal_operations::{Operation, TradeAccount},
     storage_management::StorageBalances,
 };
 use intear_dex_types::{AssetId, DexId, SwapRequest, SwapRequestAmount};
 use near_sdk::{
-    AccountId, BorshStorageKey, Promise,
+    AccountId, BorshStorageKey, PromiseOrValue,
     json_types::{Base58CryptoHash, Base64VecU8, U128},
     near,
     store::{IterableMap, LookupMap},
@@ -30,13 +31,13 @@ pub struct DexEngine {
     /// storage of traditional smart contract dexes. It's
     /// public, but currently there's no way to access other
     /// dexes' storage from dex runtime.
-    dex_storage: LookupMap<(DexId, Vec<u8>), Vec<u8>>,
+    dex_storage: DexStorage,
     /// Wasm code for each dex.
     dex_codes: LookupMap<DexId, Vec<u8>>,
     /// Storage balances for each dex, translated to storage
     /// of this smart contract. use dex_* methods to interact
     /// with it, such as dex_storage_deposit.
-    dex_storage_balances: StorageBalances<DexId>,
+    pub dex_storage_balances: StorageBalances<DexId>,
     /// Balances for each user, custodied by the dex engine
     /// contract for faster access. This reduces the need for
     /// ft_transfer_call, which takes time.
@@ -44,7 +45,7 @@ pub struct DexEngine {
     /// Storage balances for each user, translated to storage
     /// of this smart contract. use storage management methods
     /// to interact with it, such as storage_deposit.
-    user_storage_balances: StorageBalances<AccountId>,
+    pub user_storage_balances: StorageBalances<AccountId>,
     /// Balances for all the funds custodied by the dex engine
     /// contract. This means if the dex engine contract has
     /// less than this amount, it's either bug of the asset
@@ -129,22 +130,38 @@ pub enum IntearDexEvent {
 }
 
 enum CallType<'a> {
+    Trade {
+        dex_storage_mut: &'a mut DexStorage,
+    },
     View {
-        dex_storage: &'a LookupMap<(DexId, Vec<u8>), Vec<u8>>,
+        dex_storage: &'a DexStorage,
     },
     Call {
-        dex_storage_mut: &'a mut LookupMap<(DexId, Vec<u8>), Vec<u8>>,
+        dex_storage_mut: &'a mut DexStorage,
         predecessor_id: AccountId,
     },
 }
 
-impl<'a> CallType<'a> {
-    pub fn dex_storage(&'a self) -> &'a LookupMap<(DexId, Vec<u8>), Vec<u8>> {
+type DexStorage = LookupMap<(DexId, Vec<u8>), Vec<u8>>;
+
+impl CallType<'_> {
+    pub fn dex_storage(&self) -> &DexStorage {
         match self {
+            CallType::Trade { dex_storage_mut } => dex_storage_mut,
             CallType::View { dex_storage } => dex_storage,
             CallType::Call {
                 dex_storage_mut, ..
             } => dex_storage_mut,
+        }
+    }
+
+    pub fn dex_storage_mut(&mut self) -> Option<&mut DexStorage> {
+        match self {
+            CallType::Trade { dex_storage_mut } => Some(dex_storage_mut),
+            CallType::View { .. } => None,
+            CallType::Call {
+                dex_storage_mut, ..
+            } => Some(dex_storage_mut),
         }
     }
 }
@@ -190,7 +207,7 @@ impl DexEngine {
             asset_in,
             asset_out,
             amount,
-            near_sdk::env::predecessor_account_id(),
+            TradeAccount::User(near_sdk::env::predecessor_account_id()),
         )
     }
 
@@ -227,6 +244,9 @@ impl DexEngine {
         );
     }
 
+    /// Register assets for an account or dex, reserving storage
+    /// for the balance. Unregistering is not possible. No-op if
+    /// already registered.
     #[payable]
     pub fn register_assets(&mut self, asset_ids: Vec<AssetId>, r#for: Option<AccountOrDexId>) {
         near_sdk::assert_one_yocto();
@@ -246,7 +266,7 @@ impl DexEngine {
         asset_id: AssetId,
         amount: Option<U128>,
         withdraw_to: Option<AccountId>,
-    ) -> Promise {
+    ) -> PromiseOrValue<bool> {
         near_sdk::assert_one_yocto();
         self.internal_withdraw(
             asset_id,
@@ -259,7 +279,7 @@ impl DexEngine {
     #[payable]
     pub fn execute_operations(&mut self, operations: Vec<Operation>) {
         near_sdk::assert_one_yocto();
-        self.internal_execute_operations(operations, near_sdk::env::predecessor_account_id());
+        self.internal_execute_operations(operations, near_sdk::env::predecessor_account_id(), None);
     }
 
     pub fn asset_balance_of(&self, of: AccountOrDexId, asset_id: AssetId) -> Option<U128> {

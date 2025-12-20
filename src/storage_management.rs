@@ -105,12 +105,15 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
             .unwrap_or_default()
     }
 
-    fn storage_deposit(
+    pub fn storage_deposit(
         &mut self,
         account_id: K,
         registration_only: Option<bool>,
+        mut deposit: NearToken,
     ) -> StorageBalance {
-        let mut deposit = near_sdk::env::attached_deposit();
+        if deposit < STORAGE_MIN_BOUND {
+            panic!("Deposit amount {deposit} is less than the minimum bound {STORAGE_MIN_BOUND}");
+        }
         if registration_only.is_some_and(|r| r) {
             if let Some(balance) = self.storage_balances.get(&account_id) {
                 Promise::new(near_sdk::env::predecessor_account_id())
@@ -151,7 +154,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         balance.into()
     }
 
-    fn storage_withdraw(&mut self, account_id: K, amount: Option<NearToken>) -> StorageBalance {
+    pub fn storage_withdraw(&mut self, account_id: K, amount: Option<NearToken>) -> StorageBalance {
         let Some(storage_used) = self.storage_balances.get_mut(&account_id) else {
             panic!("Storage used not found");
         };
@@ -174,7 +177,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         (*storage_used).into()
     }
 
-    fn storage_unregister(&mut self, account_id: K, force: Option<bool>) -> bool {
+    pub fn storage_unregister(&mut self, account_id: K, force: Option<bool>) -> bool {
         if force.is_some_and(|f| f) {
             panic!("Force unregistration is not supported");
         }
@@ -202,14 +205,14 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         }
     }
 
-    fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+    pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds {
             min: STORAGE_MIN_BOUND,
             max: None,
         }
     }
 
-    fn storage_balance_of(&self, account_id: K) -> Option<StorageBalance> {
+    pub fn storage_balance_of(&self, account_id: K) -> Option<StorageBalance> {
         self.storage_balances.get(&account_id).map(|b| (*b).into())
     }
 }
@@ -225,6 +228,7 @@ impl StorageManagement for DexEngine {
         self.user_storage_balances.storage_deposit(
             account_id.unwrap_or_else(near_sdk::env::predecessor_account_id),
             registration_only,
+            near_sdk::env::attached_deposit(),
         )
     }
 
@@ -259,8 +263,11 @@ impl DexEngine {
         dex_id: DexId,
         registration_only: Option<bool>,
     ) -> StorageBalance {
-        self.dex_storage_balances
-            .storage_deposit(dex_id, registration_only)
+        self.dex_storage_balances.storage_deposit(
+            dex_id,
+            registration_only,
+            near_sdk::env::attached_deposit(),
+        )
     }
 
     #[payable]
