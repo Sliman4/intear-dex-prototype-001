@@ -1,5 +1,5 @@
 [workspace]
-members = ["example-dex", "smallest-possible-dex", "intear-dex-types"]
+members = ["intear-dex-types", "dexes/simple-amm", "dexes/minimal", "dexes/otc"]
 
 [package]
 name = "intear-dex"

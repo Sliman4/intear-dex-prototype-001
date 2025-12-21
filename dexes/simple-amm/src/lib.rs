@@ -25,7 +25,7 @@ type PoolId = u64;
 /// management, and event emission.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
-pub struct SimpleSwap {
+pub struct SimpleAmmDex {
     pools: LookupMap<PoolId, SimplePool>,
     pool_counter: PoolId,
 }
@@ -41,7 +41,7 @@ uint::construct_uint! {
 }
 
 #[near(event_json(standard = "simpleswap"))]
-pub enum SimpleSwapEvent {
+enum SimpleAmmDexEvent {
     #[event_version("1.0.0")]
     PoolCreated {
         pool_id: PoolId,
@@ -61,7 +61,7 @@ pub enum SimpleSwapEvent {
 }
 
 #[near]
-impl Dex for SimpleSwap {
+impl Dex for SimpleAmmDex {
     #[result_serializer(borsh)]
     fn swap(&mut self, #[serializer(borsh)] request: SwapRequest) -> SwapResponse {
         #[near(serializers=[borsh])]
@@ -141,7 +141,7 @@ impl Dex for SimpleSwap {
 }
 
 #[near]
-impl SimpleSwap {
+impl SimpleAmmDex {
     #[init]
     pub fn new() -> Self {
         Self {
@@ -218,7 +218,7 @@ impl SimpleSwap {
             "No assets other than NEAR should be attached"
         );
 
-        SimpleSwapEvent::PoolCreated {
+        SimpleAmmDexEvent::PoolCreated {
             pool_id,
             owner_id: near_sdk::env::predecessor_account_id(),
             assets,
@@ -295,7 +295,7 @@ impl SimpleSwap {
             .checked_add(asset_2_amount.0)
             .expect("Overflow");
 
-        SimpleSwapEvent::LiquidityAdded {
+        SimpleAmmDexEvent::LiquidityAdded {
             pool_id,
             amounts: (asset_1_amount, asset_2_amount),
         }
@@ -305,9 +305,8 @@ impl SimpleSwap {
         struct AddLiquidityResponse;
         let response = AddLiquidityResponse;
         DexCallResponse {
-            asset_withdraw_requests: vec![],
-            add_storage_deposit: NearToken::ZERO,
             response: near_sdk::borsh::to_vec(&response).expect("Failed to serialize response"),
+            ..Default::default()
         }
     }
 
@@ -352,7 +351,7 @@ impl SimpleSwap {
             .checked_sub(assets_to_remove.1.0)
             .expect("Not enough balance for asset 2 withdrawal");
 
-        SimpleSwapEvent::LiquidityRemoved {
+        SimpleAmmDexEvent::LiquidityRemoved {
             pool_id,
             amounts: assets_to_remove,
         }
@@ -378,8 +377,8 @@ impl SimpleSwap {
                     ),
                 },
             ],
-            add_storage_deposit: NearToken::ZERO,
             response: near_sdk::borsh::to_vec(&response).expect("Failed to serialize response"),
+            ..Default::default()
         }
     }
 

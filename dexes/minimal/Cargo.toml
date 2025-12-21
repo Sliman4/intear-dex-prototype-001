@@ -1,5 +1,5 @@
 [package]
-name = "smallest-possible-dex"
+name = "minimal-dex"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,5 +8,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 talc = { version = "4.4.3", default-features = false, features = ["lock_api"] }
-borsh = "1.6.0"
-intear-dex-types = { path = "../intear-dex-types" }
+borsh = { version = "1.6.0", default-features = false }
+intear-dex-types = { path = "../../intear-dex-types", default-features = false }

@@ -1,3 +1,6 @@
+mod common;
+use common::*;
+
 use intear_dex::internal_operations::SwapOperationAmount;
 use intear_dex::{internal_asset_operations::AccountOrDexId, internal_operations::Operation};
 use intear_dex_types::{AssetId, DexId, SwapRequestAmount};
@@ -9,75 +12,7 @@ use near_sdk::{
     json_types::{Base64VecU8, U128},
     near,
 };
-use near_workspaces::{Account, Contract};
-use std::collections::HashMap;
-use tokio::process::Command;
-use tokio::sync::OnceCell;
-
-struct CompiledWasms {
-    contract_wasm: Vec<u8>,
-    example_dex_wasm: Vec<u8>,
-    minimal_dex_wasm: Vec<u8>,
-    ft_wasm: Vec<u8>,
-}
-
-static COMPILED_WASMS: OnceCell<CompiledWasms> = OnceCell::const_new();
-
-async fn get_compiled_wasms() -> &'static CompiledWasms {
-    COMPILED_WASMS
-        .get_or_init(|| async {
-            println!("Compiling intear-dex");
-            let contract_wasm = near_workspaces::compile_project("./").await.unwrap();
-
-            println!("Compiling example-dex");
-            assert!(
-                Command::new("cargo")
-                    .args([
-                        "build",
-                        "--package=example-dex",
-                        "--release",
-                        "--target",
-                        "wasm32-unknown-unknown"
-                    ])
-                    .status()
-                    .await
-                    .unwrap()
-                    .success()
-            );
-
-            println!("Compiling smallest-possible-dex");
-            assert!(
-                Command::new("cargo")
-                    .args([
-                        "build",
-                        "--package=smallest-possible-dex",
-                        "--release",
-                        "--target",
-                        "wasm32-unknown-unknown"
-                    ])
-                    .status()
-                    .await
-                    .unwrap()
-                    .success()
-            );
-            println!("Compilation complete");
-
-            let example_dex_wasm =
-                std::fs::read("./target/wasm32-unknown-unknown/release/example_dex.wasm").unwrap();
-            let minimal_dex_wasm =
-                std::fs::read("./target/wasm32-unknown-unknown/release/smallest_possible_dex.wasm")
-                    .unwrap();
-            let ft_wasm = include_bytes!("./ft.wasm").to_vec();
-
-            CompiledWasms {
-                contract_wasm,
-                example_dex_wasm,
-                minimal_dex_wasm,
-                ft_wasm,
-            }
-        })
-        .await
-}
+use std::collections::BTreeMap;
 
 #[tokio::test]
 async fn test_minimal() {
@@ -1166,7 +1101,7 @@ async fn test_ft_transfer_call_failure_reverts() {
 async fn test_execute_operations_liquidity_and_swaps() {
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
-    let dex_wasm = &wasms.example_dex_wasm;
+    let dex_wasm = &wasms.simple_amm_dex_wasm;
     let ft_wasm = &wasms.ft_wasm;
     let sandbox = near_workspaces::sandbox().await.unwrap();
     let dex_engine_contract = sandbox.dev_deploy(contract_wasm).await.unwrap();
@@ -1345,7 +1280,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "new".to_string(),
             args: Base64VecU8(vec![]),
-            attached_assets: HashMap::new(),
+            attached_assets: BTreeMap::new(),
         },
         Operation::DexCall {
             dex_id: DexId {
@@ -1359,7 +1294,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
                 })
                 .unwrap(),
             ),
-            attached_assets: HashMap::from_iter([(
+            attached_assets: BTreeMap::from_iter([(
                 AssetId::Near,
                 U128(NearToken::from_millinear(10).as_yoctonear()),
             )]),
@@ -1379,7 +1314,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
                 })
                 .unwrap(),
             ),
-            attached_assets: HashMap::from_iter([(
+            attached_assets: BTreeMap::from_iter([(
                 AssetId::Near,
                 U128(NearToken::from_millinear(10).as_yoctonear()),
             )]),
@@ -1391,7 +1326,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "add_liquidity".to_string(),
             args: Base64VecU8(near_sdk::borsh::to_vec(&AddLiquidityArgs { pool_id: 0 }).unwrap()),
-            attached_assets: HashMap::from_iter([
+            attached_assets: BTreeMap::from_iter([
                 (AssetId::Near, U128(lp1_near_amount.as_yoctonear())),
                 (AssetId::Nep141(ft1.id().clone()), U128(lp1_ft1_amount)),
             ]),
@@ -1403,7 +1338,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "add_liquidity".to_string(),
             args: Base64VecU8(near_sdk::borsh::to_vec(&AddLiquidityArgs { pool_id: 1 }).unwrap()),
-            attached_assets: HashMap::from_iter([
+            attached_assets: BTreeMap::from_iter([
                 (AssetId::Nep141(ft1.id().clone()), U128(lp2_ft1_amount)),
                 (AssetId::Nep141(ft2.id().clone()), U128(lp2_ft2_amount)),
             ]),
@@ -1718,114 +1653,11 @@ async fn test_operations_with_ft_deposit() {
     .unwrap();
 }
 
-/// Track tokens burnt from a transaction result and add to total_near_burnt.
-fn track_tokens_burnt(
-    result: &near_workspaces::result::ExecutionFinalResult,
-    total_near_burnt: &mut NearToken,
-) {
-    let near_burnt = result
-        .outcomes()
-        .iter()
-        .map(|o| o.tokens_burnt)
-        .reduce(|a, b| a.saturating_add(b))
-        .unwrap();
-    *total_near_burnt = total_near_burnt.saturating_add(near_burnt)
-}
-
-/// Assert the balance of a NEP-141 token of an account.
-async fn assert_ft_balance(
-    account: &Account,
-    token: Contract,
-    amount: U128,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let balance = token
-        .view("ft_balance_of")
-        .args_json(json!({
-            "account_id": account.id(),
-        }))
-        .await?
-        .json::<U128>()?;
-    if balance != amount {
-        return Err(format!(
-            "FT balance mismatch: expected {}, actual {}",
-            amount.0, balance.0
-        )
-        .into());
-    }
-    Ok(())
-}
-
-/// Assert the balance of NEAR of an account.
-async fn assert_near_balance(
-    account: &Account,
-    amount: NearToken,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let account_details = account.view_account().await?;
-    if account_details.balance != amount {
-        return Err(format!(
-            "NEAR balance mismatch: expected {}, actual {}",
-            amount.as_yoctonear(),
-            account_details.balance.as_yoctonear()
-        )
-        .into());
-    }
-    Ok(())
-}
-
-/// Assert the balance of an asset that is custodied by the dex
-/// engine contract for a user or a dex.
-async fn assert_inner_asset_balance(
-    dex_engine_contract: &Contract,
-    of: AccountOrDexId,
-    asset: AssetId,
-    amount: Option<U128>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let balance = dex_engine_contract
-        .view("asset_balance_of")
-        .args_json(json!({
-            "of": of,
-            "asset_id": asset,
-        }))
-        .await?
-        .json::<Option<U128>>()?;
-    if balance != amount {
-        return Err(format!(
-            "Inner asset balance mismatch: expected {:?}, actual {:?}",
-            amount, balance
-        )
-        .into());
-    }
-    Ok(())
-}
-
-/// Assert the total amount of an asset tracked in custody.
-async fn assert_total_in_custody(
-    dex_engine_contract: &Contract,
-    asset: AssetId,
-    amount: Option<U128>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let total = dex_engine_contract
-        .view("total_in_custody")
-        .args_json(json!({
-            "asset_id": asset,
-        }))
-        .await?
-        .json::<Option<U128>>()?;
-    if total != amount {
-        return Err(format!(
-            "Total in custody mismatch: expected {:?}, actual {:?}",
-            amount, total
-        )
-        .into());
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn test_regular_flow() {
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
-    let dex_wasm = &wasms.example_dex_wasm;
+    let dex_wasm = &wasms.simple_amm_dex_wasm;
     let ft_wasm = &wasms.ft_wasm;
     let sandbox = near_workspaces::sandbox().await.unwrap();
     let dex_engine_contract = sandbox.dev_deploy(contract_wasm).await.unwrap();

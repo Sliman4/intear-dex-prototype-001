@@ -1,6 +1,11 @@
 #![deny(clippy::arithmetic_side_effects)]
 
-use std::{collections::HashMap, fmt::Display, str::FromStr};
+#[cfg(not(feature = "std"))]
+mod std {
+    extern crate alloc;
+    pub use alloc::{collections, fmt, str};
+}
+use std::{collections::BTreeMap, fmt, fmt::Display, str::FromStr};
 
 #[cfg(feature = "json")]
 use near_sdk::serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -46,7 +51,7 @@ pub struct SwapResponse {
 #[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct DexCallRequest {
-    pub attached_assets: HashMap<AssetId, U128>,
+    pub attached_assets: BTreeMap<AssetId, U128>,
     pub args: Vec<u8>,
 }
 
@@ -88,7 +93,7 @@ pub enum AssetId {
 }
 
 impl Display for AssetId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AssetId::Near => write!(f, "near"),
             AssetId::Nep141(contract_id) => write!(f, "nep141:{contract_id}"),
@@ -160,7 +165,7 @@ impl<'de> Deserialize<'de> for AssetId {
     }
 }
 
-#[cfg(all(feature = "abi", feature = "json"))]
+#[cfg(feature = "abi")]
 impl near_sdk::schemars::JsonSchema for AssetId {
     fn schema_name() -> String {
         "AssetId".to_string()
@@ -229,7 +234,7 @@ impl<'de> Deserialize<'de> for DexId {
     }
 }
 
-#[cfg(all(feature = "abi", feature = "json"))]
+#[cfg(feature = "abi")]
 impl near_sdk::schemars::JsonSchema for DexId {
     fn schema_name() -> String {
         "DexId".to_string()

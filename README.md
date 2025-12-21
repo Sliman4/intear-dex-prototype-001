@@ -1,3 +1,3 @@
-# intear-dex-prototype-001
+# Intear DEX
 
-yesterday mainnet?
+Not audited.

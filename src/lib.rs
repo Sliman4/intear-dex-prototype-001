@@ -6,7 +6,7 @@ pub mod internal_asset_operations;
 pub mod internal_operations;
 pub mod storage_management;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     internal_asset_operations::AccountOrDexId,
@@ -221,7 +221,7 @@ impl DexEngine {
         dex_id: DexId,
         method: String,
         args: Base64VecU8,
-        attached_assets: HashMap<AssetId, U128>,
+        attached_assets: BTreeMap<AssetId, U128>,
     ) -> Base64VecU8 {
         near_sdk::assert_one_yocto();
         self.internal_dex_call(

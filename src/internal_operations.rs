@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use intear_dex_types::{
     AssetId, AssetWithdrawRequest, AssetWithdrawalType, DexCallRequest, DexCallResponse, DexId,
@@ -77,7 +77,7 @@ pub enum Operation {
         dex_id: DexId,
         method: String,
         args: Base64VecU8,
-        attached_assets: HashMap<AssetId, U128>,
+        attached_assets: BTreeMap<AssetId, U128>,
     },
     /// Transfer assets to a different account or dex.
     TransferAsset {
@@ -267,7 +267,7 @@ impl DexEngine {
         dex_id: DexId,
         method: String,
         args: Base64VecU8,
-        attached_assets: HashMap<AssetId, U128>,
+        attached_assets: BTreeMap<AssetId, U128>,
         predecessor: AccountId,
     ) -> Base64VecU8 {
         expect!(
