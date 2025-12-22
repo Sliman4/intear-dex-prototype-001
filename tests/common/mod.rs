@@ -41,6 +41,19 @@ pub async fn get_compiled_wasms() -> &'static CompiledWasms {
                     .unwrap()
                     .success()
             );
+            assert!(
+                Command::new("wasm-opt")
+                    .args([
+                        "-O",
+                        "./target/wasm32-unknown-unknown/release/simple_amm_dex.wasm",
+                        "-o",
+                        "./target/wasm32-unknown-unknown/release/simple_amm_dex.wasm"
+                    ])
+                    .status()
+                    .await
+                    .unwrap()
+                    .success()
+            );
 
             println!("Compiling minimal-dex");
             assert!(
@@ -57,6 +70,19 @@ pub async fn get_compiled_wasms() -> &'static CompiledWasms {
                     .unwrap()
                     .success()
             );
+            assert!(
+                Command::new("wasm-opt")
+                    .args([
+                        "-O",
+                        "./target/wasm32-unknown-unknown/release/minimal_dex.wasm",
+                        "-o",
+                        "./target/wasm32-unknown-unknown/release/minimal_dex.wasm"
+                    ])
+                    .status()
+                    .await
+                    .unwrap()
+                    .success()
+            );
 
             println!("Compiling otc-dex");
             assert!(
@@ -67,6 +93,19 @@ pub async fn get_compiled_wasms() -> &'static CompiledWasms {
                         "--release",
                         "--target",
                         "wasm32-unknown-unknown"
+                    ])
+                    .status()
+                    .await
+                    .unwrap()
+                    .success()
+            );
+            assert!(
+                Command::new("wasm-opt")
+                    .args([
+                        "-O",
+                        "./target/wasm32-unknown-unknown/release/otc_dex.wasm",
+                        "-o",
+                        "./target/wasm32-unknown-unknown/release/otc_dex.wasm"
                     ])
                     .status()
                     .await
