@@ -82,8 +82,7 @@ pub enum AssetWithdrawalType {
     WithdrawUnderlyingAsset(AccountId),
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord)]
-#[cfg_attr(debug_assertions, derive(Debug))]
+#[derive(PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Debug)]
 #[near(serializers=[borsh])]
 pub enum AssetId {
     Near,
@@ -252,7 +251,7 @@ pub trait Dex {
 
 #[macro_export]
 macro_rules! expect {
-    ($condition:expr, $message:literal $(, $fmt_args:expr)*) => {
+    ($condition:expr, $message:literal $(, $fmt_args:expr)* $(,)?) => {
         if !$condition {
             panic!($message $(, $fmt_args)*);
         }

@@ -269,18 +269,21 @@ impl DexEngine {
         args: Base64VecU8,
         attached_assets: BTreeMap<AssetId, U128>,
         predecessor: AccountId,
+        anon_swap_available_assets: Option<&mut HashMap<AssetId, U128>>,
     ) -> Base64VecU8 {
         expect!(
             method != "swap",
             "Method name 'swap' is reserved for the swap operation"
         );
 
-        for (asset_id, amount) in attached_assets.clone() {
-            self.assert_has_enough(
-                AccountOrDexId::Account(predecessor.clone()),
-                asset_id.clone(),
-                amount,
-            );
+        if anon_swap_available_assets.is_none() {
+            for (asset_id, amount) in attached_assets.clone() {
+                self.assert_has_enough(
+                    AccountOrDexId::Account(predecessor.clone()),
+                    asset_id.clone(),
+                    amount,
+                );
+            }
         }
 
         let code = self.dex_codes.get(&dex_id).expect("Dex code not found");
@@ -304,6 +307,7 @@ impl DexEngine {
                 call_type: CallType::Call {
                     dex_storage_mut: &mut self.dex_storage,
                     predecessor_id: predecessor.clone(),
+                    is_authorized: anon_swap_available_assets.is_none(),
                 },
                 dex_id: dex_id.clone(),
                 dex_storage_balances: &self.dex_storage_balances,
@@ -341,13 +345,33 @@ impl DexEngine {
                 .expect("Failed to deserialize dex call response"),
             None => Default::default(),
         };
-        for (asset_id, amount) in request.attached_assets {
-            self.internal_transfer_asset(
-                AccountOrDexId::Account(predecessor.clone()),
-                AccountOrDexId::Dex(dex_id.clone()),
-                asset_id.clone(),
-                amount,
-            );
+        if let Some(anon_swap_available_assets) = anon_swap_available_assets {
+            for (asset_id, amount) in request.attached_assets {
+                anon_swap_available_assets
+                    .entry(asset_id.clone())
+                    .and_modify(|b| {
+                        b.0 = b.0.checked_sub(amount.0).unwrap_or_else(|| {
+                            panic!("Not enough balance for attached deposit of {asset_id}")
+                        });
+                    })
+                    .or_insert_with(|| {
+                        panic!("Asset {asset_id} was not attached, while specified that it was attached")
+                    });
+                self.internal_increase_assets(
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    asset_id,
+                    amount,
+                );
+            }
+        } else {
+            for (asset_id, amount) in request.attached_assets {
+                self.internal_transfer_asset(
+                    AccountOrDexId::Account(predecessor.clone()),
+                    AccountOrDexId::Dex(dex_id.clone()),
+                    asset_id.clone(),
+                    amount,
+                );
+            }
         }
 
         for AssetWithdrawRequest {
@@ -752,10 +776,14 @@ impl DexEngine {
                     args,
                     attached_assets,
                 } => {
-                    if !fully_authorized {
-                        panic!("Operation only available in execute_actions");
-                    }
-                    self.internal_dex_call(dex_id, method, args, attached_assets, by.clone());
+                    self.internal_dex_call(
+                        dex_id,
+                        method,
+                        args,
+                        attached_assets,
+                        by.clone(),
+                        anon_swap_available_assets.as_mut(),
+                    );
                 }
                 Operation::TransferAsset {
                     to,

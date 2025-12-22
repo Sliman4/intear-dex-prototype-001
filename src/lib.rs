@@ -139,6 +139,7 @@ enum CallType<'a> {
     Call {
         dex_storage_mut: &'a mut DexStorage,
         predecessor_id: AccountId,
+        is_authorized: bool,
     },
 }
 
@@ -230,6 +231,7 @@ impl DexEngine {
             args,
             attached_assets,
             near_sdk::env::predecessor_account_id(),
+            None,
         )
     }
 

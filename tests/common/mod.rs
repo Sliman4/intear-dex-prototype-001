@@ -4,6 +4,7 @@ use intear_dex::internal_asset_operations::AccountOrDexId;
 use intear_dex_types::AssetId;
 use near_sdk::serde_json::json;
 use near_sdk::{NearToken, json_types::U128};
+use near_workspaces::result::ExecutionFinalResult;
 use near_workspaces::{Account, Contract};
 use tokio::process::Command;
 use tokio::sync::OnceCell;
@@ -193,6 +194,15 @@ pub async fn assert_total_in_custody(
             amount, total
         )
         .into());
+    }
+    Ok(())
+}
+
+/// Assert that a result is successful, and print the result if it is not.
+pub fn assert_success(result: &ExecutionFinalResult) -> Result<(), String> {
+    if !result.is_success() {
+        println!("{result:#?}");
+        return Err("Not successful".to_string());
     }
     Ok(())
 }

@@ -2,12 +2,14 @@
 
 use std::collections::HashMap;
 
+use crypto_bigint::U256;
 use intear_dex_types::{
     AssetId, AssetWithdrawRequest, AssetWithdrawalType, Dex, DexCallResponse, SwapRequest,
     SwapRequestAmount, SwapResponse, expect,
 };
 use near_sdk::{
-    AccountId, BorshStorageKey, NearToken, PanicOnDefault, json_types::U128, near, store::LookupMap,
+    AccountId, BorshStorageKey, NearToken, PanicOnDefault, assert_one_yocto, json_types::U128,
+    near, store::LookupMap,
 };
 
 #[global_allocator]
@@ -34,10 +36,6 @@ pub struct SimpleAmmDex {
 #[derive(BorshStorageKey)]
 enum StorageKey {
     Pools,
-}
-
-uint::construct_uint! {
-    pub struct U256(4);
 }
 
 #[near(event_json(standard = "simpleswap"))]
@@ -100,9 +98,13 @@ impl Dex for SimpleAmmDex {
                 };
                 // in_balance was checked to be positive
                 #[allow(clippy::arithmetic_side_effects)]
-                let amount_out = (U256::from(exact_amount_in.0) * U256::from(*out_balance)
-                    / (U256::from(*in_balance) + U256::from(exact_amount_in.0)))
-                .as_u128();
+                let amount_out = u128::from_le_bytes(
+                    *(U256::from(exact_amount_in.0) * U256::from(*out_balance)
+                        / (U256::from(*in_balance) + U256::from(exact_amount_in.0)))
+                    .to_le_bytes()
+                    .first_chunk()
+                    .unwrap(),
+                );
                 *in_balance = in_balance.checked_add(exact_amount_in.0).expect("Overflow");
                 *out_balance = out_balance.checked_sub(amount_out).expect("Underflow");
                 SwapResponse {
@@ -123,10 +125,14 @@ impl Dex for SimpleAmmDex {
                 );
                 // amount_out was checked to be less than out_balance
                 #[allow(clippy::arithmetic_side_effects)]
-                let amount_in = ((U256::from(*in_balance) * U256::from(exact_amount_out.0))
-                    / (U256::from(*out_balance) - U256::from(exact_amount_out.0))
-                    + U256::one())
-                .as_u128();
+                let amount_in = u128::from_le_bytes(
+                    *((U256::from(*in_balance) * U256::from(exact_amount_out.0))
+                        / (U256::from(*out_balance) - U256::from(exact_amount_out.0)))
+                    .saturating_add(&U256::ONE)
+                    .to_le_bytes()
+                    .first_chunk()
+                    .unwrap(),
+                );
                 *in_balance = in_balance.checked_add(amount_in).expect("Overflow");
                 *out_balance = out_balance
                     .checked_sub(exact_amount_out.0)
@@ -143,13 +149,16 @@ impl Dex for SimpleAmmDex {
 #[near]
 impl SimpleAmmDex {
     #[init]
+    #[payable]
     pub fn new() -> Self {
+        assert_one_yocto();
         Self {
             pools: LookupMap::new(StorageKey::Pools),
             pool_counter: 0,
         }
     }
 
+    #[payable]
     #[result_serializer(borsh)]
     pub fn create_pool(
         &mut self,
@@ -158,6 +167,7 @@ impl SimpleAmmDex {
         mut attached_assets: HashMap<AssetId, U128>,
         #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
+        assert_one_yocto();
         #[near(serializers=[borsh])]
         struct CreatePoolArgs {
             assets: (AssetId, AssetId),
@@ -248,6 +258,7 @@ impl SimpleAmmDex {
         }
     }
 
+    #[payable]
     #[result_serializer(borsh)]
     pub fn add_liquidity(
         &mut self,
@@ -256,6 +267,7 @@ impl SimpleAmmDex {
         mut attached_assets: HashMap<AssetId, U128>,
         #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
+        assert_one_yocto();
         #[near(serializers=[borsh])]
         struct AddLiquidityArgs {
             pool_id: PoolId,
@@ -310,12 +322,14 @@ impl SimpleAmmDex {
         }
     }
 
+    #[payable]
     #[result_serializer(borsh)]
     pub fn remove_liquidity(
         &mut self,
         #[serializer(borsh)] attached_assets: HashMap<AssetId, U128>,
         #[serializer(borsh)] args: Vec<u8>,
     ) -> DexCallResponse {
+        assert_one_yocto();
         #[near(serializers=[borsh])]
         struct RemoveLiquidityArgs {
             pool_id: PoolId,

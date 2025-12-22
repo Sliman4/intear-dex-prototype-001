@@ -311,8 +311,15 @@ pub fn input(mut caller: Caller<'_, RunnerData>, register_id: u64) {
     caller.data_mut().registers.insert(register_id, request);
 }
 
+// 1 yocto if this is an authorized dex call, 0 otherwise
 pub fn attached_deposit(mut caller: Caller<'_, RunnerData>, balance_ptr: u64) {
-    let attached_deposit = NearToken::default().as_yoctonear(); // always 0
+    let attached_deposit = match caller.data().call_type {
+        CallType::Call {
+            is_authorized: true,
+            ..
+        } => NearToken::from_yoctonear(1),
+        _ => NearToken::default(),
+    };
     let memory = caller
         .get_export("memory")
         .and_then(|m| m.into_memory())
@@ -321,7 +328,7 @@ pub fn attached_deposit(mut caller: Caller<'_, RunnerData>, balance_ptr: u64) {
         .write(
             &mut caller,
             balance_ptr as usize,
-            &attached_deposit.to_le_bytes(),
+            &attached_deposit.as_yoctonear().to_le_bytes(),
         )
         .expect("Failed to write data to guest memory");
 }

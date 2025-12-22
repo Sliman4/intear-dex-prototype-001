@@ -16,6 +16,12 @@ use std::collections::BTreeMap;
 
 #[tokio::test]
 async fn test_minimal() {
+    let storage_deposit_amount = NearToken::from_near(5);
+    let initial_near_deposit = NearToken::from_near(20);
+    let one_yoctonear = NearToken::from_yoctonear(1);
+    let transfer_amount = 1000u128;
+    let swap_amount = 10u128;
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let dex_wasm = &wasms.minimal_dex_wasm;
@@ -32,31 +38,29 @@ async fn test_minimal() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "dex_id": dex_id,
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "deploy_dex_code")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "last_part_of_id": dex_id_string,
             "code_base64": BASE64_STANDARD.encode(dex_wasm),
@@ -64,7 +68,7 @@ async fn test_minimal() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let initial_near_balance = dex_deployer_account.view_account().await.unwrap().balance;
     let mut total_near_burnt = NearToken::from_yoctonear(0);
@@ -80,7 +84,7 @@ async fn test_minimal() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near],
             "for": AccountOrDexId::Account(dex_deployer_account.id().clone()),
@@ -88,25 +92,25 @@ async fn test_minimal() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(20))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert_near_balance(
         &dex_deployer_account,
         initial_near_balance
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(total_near_burnt)
-            .saturating_sub(NearToken::from_yoctonear(1)),
+            .saturating_sub(one_yoctonear),
     )
     .await
     .unwrap();
@@ -114,7 +118,7 @@ async fn test_minimal() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(20).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -122,7 +126,7 @@ async fn test_minimal() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near],
             "for": AccountOrDexId::Dex(dex_id.clone()),
@@ -130,7 +134,7 @@ async fn test_minimal() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
 
     assert_inner_asset_balance(
@@ -144,22 +148,22 @@ async fn test_minimal() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "transfer_asset")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "to": AccountOrDexId::Dex(dex_id.clone()),
             "asset_id": AssetId::Near,
-            "amount": U128(1000),
+            "amount": U128(transfer_amount),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(20).as_yoctonear() - 1000)),
+        Some(U128(initial_near_deposit.as_yoctonear() - transfer_amount)),
     )
     .await
     .unwrap();
@@ -167,7 +171,7 @@ async fn test_minimal() {
         &dex_engine_contract,
         AccountOrDexId::Dex(dex_id.clone()),
         AssetId::Near,
-        Some(U128(1000)),
+        Some(U128(transfer_amount)),
     )
     .await
     .unwrap();
@@ -176,33 +180,33 @@ async fn test_minimal() {
         &dex_engine_contract,
         AccountOrDexId::Dex(dex_id.clone()),
         AssetId::Near,
-        Some(U128(1000)),
+        Some(U128(transfer_amount)),
     )
     .await
     .unwrap();
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "swap_simple")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "message": BASE64_STANDARD.encode(vec![]),
             "asset_in": AssetId::Near,
             "asset_out": AssetId::Near,
-            "amount": SwapRequestAmount::ExactIn(U128(10)),
+            "amount": SwapRequestAmount::ExactIn(U128(swap_amount)),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     let result: (U128, U128) = result.json().unwrap();
-    assert_eq!(result, (U128(10), U128(10)));
+    assert_eq!(result, (U128(swap_amount), U128(swap_amount)));
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Dex(dex_id.clone()),
         AssetId::Near,
-        Some(U128(1000)),
+        Some(U128(transfer_amount)),
     )
     .await
     .unwrap();
@@ -210,6 +214,10 @@ async fn test_minimal() {
 
 #[tokio::test]
 async fn test_storage_actions() {
+    let storage_deposit_amount = NearToken::from_near(1);
+    let min_storage_bound = NearToken::from_millinear(10);
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let sandbox = near_workspaces::sandbox().await.unwrap();
@@ -223,7 +231,7 @@ async fn test_storage_actions() {
         .unwrap()
         .json::<StorageBalanceBounds>()
         .unwrap();
-    assert_eq!(storage_bounds.min, NearToken::from_millinear(10));
+    assert_eq!(storage_bounds.min, min_storage_bound);
     assert!(storage_bounds.max.is_none());
 
     let storage_balance_before = dex_engine_contract
@@ -238,7 +246,7 @@ async fn test_storage_actions() {
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(1))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "account_id": user.id(),
             "registration_only": true,
@@ -246,7 +254,7 @@ async fn test_storage_actions() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let deposited_balance = result.json::<StorageBalance>().unwrap();
     assert_eq!(deposited_balance.total, storage_bounds.min);
     assert!(deposited_balance.available < deposited_balance.total);
@@ -269,14 +277,14 @@ async fn test_storage_actions() {
     let result = user
         .call(dex_engine_contract.id(), "storage_withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "amount": deposited_balance.available,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let balance_after_withdraw = result.json::<StorageBalance>().unwrap();
     assert_eq!(
         balance_after_withdraw.available,
@@ -286,14 +294,14 @@ async fn test_storage_actions() {
     let result = user
         .call(dex_engine_contract.id(), "storage_unregister")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "force": false,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(result.json::<bool>().unwrap());
 
     let storage_balance_after_unregister = dex_engine_contract
@@ -308,6 +316,10 @@ async fn test_storage_actions() {
 
 #[tokio::test]
 async fn test_dex_storage_actions() {
+    let storage_deposit_amount = NearToken::from_near(1);
+    let min_storage_bound = NearToken::from_millinear(10);
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let sandbox = near_workspaces::sandbox().await.unwrap();
@@ -327,13 +339,13 @@ async fn test_dex_storage_actions() {
         .unwrap()
         .json::<StorageBalanceBounds>()
         .unwrap();
-    assert_eq!(storage_bounds.min, NearToken::from_millinear(10));
+    assert_eq!(storage_bounds.min, min_storage_bound);
     assert!(storage_bounds.max.is_none());
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(1))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "registration_only": true,
@@ -341,7 +353,7 @@ async fn test_dex_storage_actions() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let deposited_balance = result.json::<StorageBalance>().unwrap();
     assert_eq!(deposited_balance.total, storage_bounds.min);
     assert!(deposited_balance.available < deposited_balance.total);
@@ -350,7 +362,7 @@ async fn test_dex_storage_actions() {
     let result = intruder_account
         .call(dex_engine_contract.id(), "dex_storage_withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "amount": deposited_balance.available,
@@ -377,7 +389,7 @@ async fn test_dex_storage_actions() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_storage_withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "amount": storage_balance_after_deposit.available,
@@ -385,7 +397,7 @@ async fn test_dex_storage_actions() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let balance_after_withdraw = result.json::<StorageBalance>().unwrap();
     assert_eq!(
         balance_after_withdraw.available,
@@ -408,6 +420,15 @@ async fn test_dex_storage_actions() {
 
 #[tokio::test]
 async fn test_withdraw_failures() {
+    let ft_total_supply = NearToken::from_near(1_000_000_000);
+    let storage_deposit_amount = NearToken::from_near(1);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let initial_near_deposit = NearToken::from_near(2);
+    let ft_deposit_amount = 1_000_000_000u128;
+    let ft_withdraw_attempt = 100_000_000u128;
+    let near_withdraw_amount = NearToken::from_near(1);
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let ft_wasm = &wasms.ft_wasm;
@@ -422,29 +443,27 @@ async fn test_withdraw_failures() {
         .call("new_default_meta")
         .args_json(json!({
             "owner_id": user.id(),
-            "total_supply": U128(NearToken::from_near(1_000_000_000).as_yoctonear()),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(1))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near, AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Account(user.id().clone()),
@@ -452,60 +471,58 @@ async fn test_withdraw_failures() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(2))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
+        .deposit(storage_deposit_for_ft)
         .args_json(json!({
             "account_id": dex_engine_contract.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_for_ft)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "ft_transfer_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "receiver_id": dex_engine_contract.id(),
-            "amount": U128(1_000_000_000),
+            "amount": U128(ft_deposit_amount),
             "msg": "",
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(2).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -513,7 +530,7 @@ async fn test_withdraw_failures() {
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
@@ -521,22 +538,22 @@ async fn test_withdraw_failures() {
     let result = user
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Nep141(ft.id().clone()),
-            "amount": U128(100_000_000),
+            "amount": U128(ft_withdraw_attempt),
             "withdraw_to": receiver_unregistered.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(!result.json::<bool>().unwrap());
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
@@ -544,22 +561,22 @@ async fn test_withdraw_failures() {
     let result = user
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Near,
-            "amount": U128(NearToken::from_near(1).as_yoctonear()),
+            "amount": U128(near_withdraw_amount.as_yoctonear()),
             "withdraw_to": nonexistent_account,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(!result.json::<bool>().unwrap());
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(2).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -567,6 +584,16 @@ async fn test_withdraw_failures() {
 
 #[tokio::test]
 async fn test_total_in_custody_consistency() {
+    let ft_total_supply = NearToken::from_near(1_000_000_000);
+    let storage_deposit_amount = NearToken::from_near(1);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let initial_near_deposit = NearToken::from_near(2);
+    let ft_deposit_amount = 1_000_000_000u128;
+    let ft_withdraw_attempt = 100_000_000u128;
+    let near_withdraw_amount = NearToken::from_near(1);
+    let ft_successful_withdraw = 500_000_000u128;
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let ft_wasm = &wasms.ft_wasm;
@@ -580,29 +607,27 @@ async fn test_total_in_custody_consistency() {
         .call("new_default_meta")
         .args_json(json!({
             "owner_id": user.id(),
-            "total_supply": U128(NearToken::from_near(1_000_000_000).as_yoctonear()),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(1))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near, AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Account(user.id().clone()),
@@ -610,7 +635,7 @@ async fn test_total_in_custody_consistency() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     assert_total_in_custody(&dex_engine_contract, AssetId::Near, Some(U128(0)))
         .await
@@ -626,97 +651,95 @@ async fn test_total_in_custody_consistency() {
     let result = user
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(2))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
+        .deposit(storage_deposit_for_ft)
         .args_json(json!({
             "account_id": dex_engine_contract.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_for_ft)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "ft_transfer_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "receiver_id": dex_engine_contract.id(),
-            "amount": U128(1_000_000_000),
+            "amount": U128(ft_deposit_amount),
             "msg": "",
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Near,
-        Some(U128(NearToken::from_near(2).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
     let result = user
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Nep141(ft.id().clone()),
-            "amount": U128(100_000_000),
+            "amount": U128(ft_withdraw_attempt),
             "withdraw_to": receiver_unregistered.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(!result.json::<bool>().unwrap());
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
@@ -724,36 +747,36 @@ async fn test_total_in_custody_consistency() {
     let result = user
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Near,
-            "amount": U128(NearToken::from_near(1).as_yoctonear()),
+            "amount": U128(near_withdraw_amount.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(result.json::<bool>().unwrap());
 
     let result = user
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Nep141(ft.id().clone()),
-            "amount": U128(500_000_000),
+            "amount": U128(ft_successful_withdraw),
             "withdraw_to": user.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(result.json::<bool>().unwrap());
 
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Near,
-        Some(U128(NearToken::from_near(1).as_yoctonear())),
+        Some(U128(near_withdraw_amount.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -761,7 +784,7 @@ async fn test_total_in_custody_consistency() {
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(1).as_yoctonear())),
+        Some(U128(near_withdraw_amount.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -769,7 +792,7 @@ async fn test_total_in_custody_consistency() {
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(500_000_000)),
+        Some(U128(ft_successful_withdraw)),
     )
     .await
     .unwrap();
@@ -777,7 +800,7 @@ async fn test_total_in_custody_consistency() {
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(500_000_000)),
+        Some(U128(ft_successful_withdraw)),
     )
     .await
     .unwrap();
@@ -785,6 +808,13 @@ async fn test_total_in_custody_consistency() {
 
 #[tokio::test]
 async fn test_execute_operations() {
+    let storage_deposit_amount = NearToken::from_near(5);
+    let initial_near_deposit = NearToken::from_near(3);
+    let transfer_amount = NearToken::from_millinear(1);
+    let withdraw_amount = NearToken::from_millinear(2);
+    let swap_amount = NearToken::from_millinear(1);
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let dex_wasm = &wasms.minimal_dex_wasm;
@@ -801,31 +831,29 @@ async fn test_execute_operations() {
     let result = user
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near],
             "for": AccountOrDexId::Account(user.id().clone()),
@@ -833,20 +861,18 @@ async fn test_execute_operations() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(3))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
-    let transfer_amount = NearToken::from_millinear(1).as_yoctonear();
-    let withdraw_amount = NearToken::from_millinear(2).as_yoctonear();
     let operations = vec![
         Operation::RegisterAssets {
             asset_ids: vec![AssetId::Near],
@@ -865,7 +891,7 @@ async fn test_execute_operations() {
                 id: dex_id_string.clone(),
             }),
             asset_id: AssetId::Near,
-            amount: U128(transfer_amount),
+            amount: U128(transfer_amount.as_yoctonear()),
         },
         Operation::SwapSimple {
             dex_id: DexId {
@@ -876,12 +902,12 @@ async fn test_execute_operations() {
             asset_in: AssetId::Near,
             asset_out: AssetId::Near,
             amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(
-                NearToken::from_millinear(1).as_yoctonear(),
+                swap_amount.as_yoctonear(),
             ))),
         },
         Operation::Withdraw {
             asset_id: AssetId::Near,
-            amount: Some(U128(withdraw_amount)),
+            amount: Some(U128(withdraw_amount.as_yoctonear())),
             to: None,
             rescue_address: None,
         },
@@ -890,24 +916,24 @@ async fn test_execute_operations() {
     let result = user
         .call(dex_engine_contract.id(), "execute_operations")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "operations": operations,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     assert_inner_asset_balance(
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(3)
-                .as_yoctonear()
+            initial_near_deposit
                 .saturating_sub(transfer_amount)
-                .saturating_sub(withdraw_amount),
+                .saturating_sub(withdraw_amount)
+                .as_yoctonear(),
         )),
     )
     .await
@@ -919,7 +945,7 @@ async fn test_execute_operations() {
             id: dex_id_string,
         }),
         AssetId::Near,
-        Some(U128(transfer_amount)),
+        Some(U128(transfer_amount.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -927,9 +953,9 @@ async fn test_execute_operations() {
         &dex_engine_contract,
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(3)
-                .as_yoctonear()
-                .saturating_sub(withdraw_amount),
+            initial_near_deposit
+                .saturating_sub(withdraw_amount)
+                .as_yoctonear(),
         )),
     )
     .await
@@ -938,6 +964,8 @@ async fn test_execute_operations() {
 
 #[tokio::test]
 async fn test_execute_operations_failure_reverts() {
+    let deposit_amount = NearToken::from_near(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let sandbox = near_workspaces::sandbox().await.unwrap();
@@ -954,7 +982,7 @@ async fn test_execute_operations_failure_reverts() {
     let result = user
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(1))
+        .deposit(deposit_amount)
         .args_json(json!({
             "operations": operations,
         }))
@@ -978,6 +1006,13 @@ async fn test_execute_operations_failure_reverts() {
 
 #[tokio::test]
 async fn test_ft_transfer_call_failure_reverts() {
+    let ft_total_supply = NearToken::from_near(10);
+    let storage_deposit_amount = NearToken::from_near(1);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let ft_transfer_amount = 1_000_000u128;
+    let ft_withdraw_attempt = 1_000_000_000_000u128;
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let ft_wasm = &wasms.ft_wasm;
@@ -990,29 +1025,27 @@ async fn test_ft_transfer_call_failure_reverts() {
         .call("new_default_meta")
         .args_json(json!({
             "owner_id": user.id(),
-            "total_supply": U128(NearToken::from_near(10).as_yoctonear()),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(1))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Account(user.id().clone()),
@@ -1020,34 +1053,32 @@ async fn test_ft_transfer_call_failure_reverts() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
+        .deposit(storage_deposit_for_ft)
         .args_json(json!({
             "account_id": dex_engine_contract.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_for_ft)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let operations = vec![Operation::Withdraw {
         asset_id: AssetId::Nep141(ft.id().clone()),
-        amount: Some(U128(1_000_000_000_000)),
+        amount: Some(U128(ft_withdraw_attempt)),
         to: None,
         rescue_address: None,
     }];
@@ -1065,16 +1096,16 @@ async fn test_ft_transfer_call_failure_reverts() {
     let result = user
         .call(ft.id(), "ft_transfer_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "receiver_id": dex_engine_contract.id(),
-            "amount": U128(1_000_000),
+            "amount": U128(ft_transfer_amount),
             "msg": near_sdk::serde_json::to_string(&operations).unwrap(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     assert!(result.json::<U128>().unwrap() == U128(0));
 
     assert_ft_balance(&user, ft.clone(), initial_ft_balance)
@@ -1099,6 +1130,19 @@ async fn test_ft_transfer_call_failure_reverts() {
 
 #[tokio::test]
 async fn test_execute_operations_liquidity_and_swaps() {
+    let ft_total_supply = NearToken::from_near(1_000_000_000);
+    let storage_deposit_amount = NearToken::from_near(5);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let initial_near_deposit = NearToken::from_near(5);
+    let ft_deposit_amount = 1_000_000u128;
+    let pool_creation_fee = NearToken::from_millinear(10);
+    let swap_amount_in = NearToken::from_millinear(1);
+    let lp1_near_amount = NearToken::from_near(1);
+    let lp1_ft1_amount = 500_000u128;
+    let lp2_ft1_amount = 200_000u128;
+    let lp2_ft2_amount = 600_000u128;
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let dex_wasm = &wasms.simple_amm_dex_wasm;
@@ -1120,42 +1164,40 @@ async fn test_execute_operations_liquidity_and_swaps() {
             .call("new_default_meta")
             .args_json(json!({
                 "owner_id": user.id(),
-                "total_supply": U128(NearToken::from_near(1_000_000_000).as_yoctonear()),
+                "total_supply": U128(ft_total_supply.as_yoctonear()),
             }))
             .transact()
             .await
             .unwrap();
-        assert!(result.is_success());
+        assert_success(&result).unwrap();
     }
 
     let result = user
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [
                 AssetId::Near,
@@ -1167,12 +1209,12 @@ async fn test_execute_operations_liquidity_and_swaps() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [
                 AssetId::Near,
@@ -1187,37 +1229,35 @@ async fn test_execute_operations_liquidity_and_swaps() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     for ft in [&ft1, &ft2] {
         let result = user
             .call(ft.id(), "storage_deposit")
             .max_gas()
-            .deposit("0.00125 NEAR".parse().unwrap())
+            .deposit(storage_deposit_for_ft)
             .args_json(json!({
                 "account_id": dex_engine_contract.id(),
             }))
             .transact()
             .await
             .unwrap();
-        assert!(result.is_success());
+        assert_success(&result).unwrap();
         let result = user
             .call(ft.id(), "storage_deposit")
             .max_gas()
-            .deposit("0.00125 NEAR".parse().unwrap())
-            .args_json(json!({
-                "account_id": user.id(),
-            }))
+            .deposit(storage_deposit_for_ft)
+            .args_json(json!({}))
             .transact()
             .await
             .unwrap();
-        assert!(result.is_success());
+        assert_success(&result).unwrap();
     }
 
     let result = user
         .call(dex_engine_contract.id(), "deploy_dex_code")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "last_part_of_id": dex_id_string,
             "code_base64": BASE64_STANDARD.encode(dex_wasm),
@@ -1225,32 +1265,32 @@ async fn test_execute_operations_liquidity_and_swaps() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     for ft in [&ft1, &ft2] {
         let result = user
             .call(ft.id(), "ft_transfer_call")
             .max_gas()
-            .deposit(NearToken::from_yoctonear(1))
+            .deposit(one_yoctonear)
             .args_json(json!({
                 "receiver_id": dex_engine_contract.id(),
-                "amount": U128(1_000_000),
+                "amount": U128(ft_deposit_amount),
                 "msg": "",
             }))
             .transact()
             .await
             .unwrap();
-        assert!(result.is_success());
+        assert_success(&result).unwrap();
     }
 
     #[near(serializers=[borsh])]
@@ -1265,12 +1305,6 @@ async fn test_execute_operations_liquidity_and_swaps() {
     struct SwapArgs {
         pool_id: u64,
     }
-
-    let swap_amount_in = NearToken::from_millinear(1);
-    let lp1_near_amount = NearToken::from_near(1);
-    let lp1_ft1_amount = 500_000;
-    let lp2_ft1_amount = 200_000;
-    let lp2_ft2_amount = 600_000;
 
     let operations = vec![
         Operation::DexCall {
@@ -1296,7 +1330,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             ),
             attached_assets: BTreeMap::from_iter([(
                 AssetId::Near,
-                U128(NearToken::from_millinear(10).as_yoctonear()),
+                U128(pool_creation_fee.as_yoctonear()),
             )]),
         },
         Operation::DexCall {
@@ -1316,7 +1350,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             ),
             attached_assets: BTreeMap::from_iter([(
                 AssetId::Near,
-                U128(NearToken::from_millinear(10).as_yoctonear()),
+                U128(pool_creation_fee.as_yoctonear()),
             )]),
         },
         Operation::DexCall {
@@ -1381,14 +1415,14 @@ async fn test_execute_operations_liquidity_and_swaps() {
     let result = user
         .call(dex_engine_contract.id(), "execute_operations")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "operations": operations,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let ft2_balance_after = user
         .view(dex_engine_contract.id(), "asset_balance_of")
@@ -1410,21 +1444,21 @@ async fn test_execute_operations_liquidity_and_swaps() {
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Near,
-        Some(U128(NearToken::from_near(5).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft1.id().clone()),
-        Some(U128(1_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft2.id().clone()),
-        Some(U128(1_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
@@ -1460,7 +1494,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
         &dex_engine_contract,
         AccountOrDexId::Account(user.id().clone()),
         AssetId::Nep141(ft2.id().clone()),
-        Some(U128(1_000_000 - lp2_ft2_amount + amount_out)),
+        Some(U128(ft_deposit_amount - lp2_ft2_amount + amount_out)),
     )
     .await
     .unwrap();
@@ -1468,6 +1502,14 @@ async fn test_execute_operations_liquidity_and_swaps() {
 
 #[tokio::test]
 async fn test_operations_with_ft_deposit() {
+    let ft_total_supply = NearToken::from_near(1_000_000_000);
+    let storage_deposit_amount = NearToken::from_near(5);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let ft_deposit_amount = 1_000_000u128;
+    let ft_transfer_to_dex = 200_000u128;
+    let ft_swap_amount = 100_000u128;
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let dex_wasm = &wasms.minimal_dex_wasm;
@@ -1488,41 +1530,39 @@ async fn test_operations_with_ft_deposit() {
         .call("new_default_meta")
         .args_json(json!({
             "owner_id": user.id(),
-            "total_supply": U128(NearToken::from_near(1_000_000_000).as_yoctonear()),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Dex(DexId {
@@ -1533,12 +1573,12 @@ async fn test_operations_with_ft_deposit() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Account(registered_user.id().clone()),
@@ -1546,12 +1586,12 @@ async fn test_operations_with_ft_deposit() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(dex_engine_contract.id(), "deploy_dex_code")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "last_part_of_id": dex_id_string,
             "code_base64": BASE64_STANDARD.encode(dex_wasm),
@@ -1559,30 +1599,28 @@ async fn test_operations_with_ft_deposit() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
+        .deposit(storage_deposit_for_ft)
         .args_json(json!({
             "account_id": dex_engine_contract.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     let result = user
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
-        .args_json(json!({
-            "account_id": user.id(),
-        }))
+        .deposit(storage_deposit_for_ft)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let operations = vec![
         Operation::TransferAsset {
@@ -1591,7 +1629,7 @@ async fn test_operations_with_ft_deposit() {
                 id: dex_id_string.clone(),
             }),
             asset_id: AssetId::Nep141(ft.id().clone()),
-            amount: U128(200_000),
+            amount: U128(ft_transfer_to_dex),
         },
         Operation::SwapSimple {
             dex_id: DexId {
@@ -1601,7 +1639,7 @@ async fn test_operations_with_ft_deposit() {
             message: Base64VecU8(vec![]),
             asset_in: AssetId::Nep141(ft.id().clone()),
             asset_out: AssetId::Nep141(ft.id().clone()),
-            amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(100_000))),
+            amount: SwapOperationAmount::Amount(SwapRequestAmount::ExactIn(U128(ft_swap_amount))),
         },
         Operation::Withdraw {
             asset_id: AssetId::Nep141(ft.id().clone()),
@@ -1614,16 +1652,16 @@ async fn test_operations_with_ft_deposit() {
     let result = user
         .call(ft.id(), "ft_transfer_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "receiver_id": dex_engine_contract.id(),
-            "amount": U128(1_000_000),
+            "amount": U128(ft_deposit_amount),
             "msg": near_sdk::serde_json::to_string(&operations).unwrap(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     assert_inner_asset_balance(
         &dex_engine_contract,
@@ -1640,14 +1678,14 @@ async fn test_operations_with_ft_deposit() {
             id: dex_id_string,
         }),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(200_000)),
+        Some(U128(ft_transfer_to_dex)),
     )
     .await
     .unwrap();
     assert_total_in_custody(
         &dex_engine_contract,
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(200_000)),
+        Some(U128(ft_transfer_to_dex)),
     )
     .await
     .unwrap();
@@ -1655,6 +1693,21 @@ async fn test_operations_with_ft_deposit() {
 
 #[tokio::test]
 async fn test_regular_flow() {
+    let ft_total_supply = NearToken::from_near(100_000_000_000);
+    let storage_deposit_amount = NearToken::from_near(5);
+    let storage_deposit_for_ft = "0.00125 NEAR".parse::<NearToken>().unwrap();
+    let initial_near_deposit = NearToken::from_near(20);
+    let ft_deposit_amount = 1_000_000_000u128;
+    let pool_creation_fee = NearToken::from_millinear(10);
+    let add_liquidity_near = NearToken::from_near(1);
+    let add_liquidity_ft = 1_000_000u128;
+    let swap_amount_in = NearToken::from_millinear(100);
+    let remove_liquidity_near = NearToken::from_millinear(500);
+    let remove_liquidity_ft = 500_000u128;
+    let withdraw_near_amount = NearToken::from_near(1);
+    let withdraw_ft_amount = 100_000_000u128;
+    let one_yoctonear = NearToken::from_yoctonear(1);
+
     let wasms = get_compiled_wasms().await;
     let contract_wasm = &wasms.contract_wasm;
     let dex_wasm = &wasms.simple_amm_dex_wasm;
@@ -1668,12 +1721,12 @@ async fn test_regular_flow() {
         .call("new_default_meta")
         .args_json(json!({
             "owner_id": dex_deployer_account.id(),
-            "total_supply": U128(NearToken::from_near(100_000_000_000).as_yoctonear()),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let dex_id_string = "dex".to_string();
     let dex_id = DexId {
@@ -1684,31 +1737,29 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
+        .deposit(storage_deposit_amount)
         .args_json(json!({
             "dex_id": dex_id,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "storage_deposit")
         .max_gas()
-        .deposit(NearToken::from_near(5))
-        .args_json(json!({
-            "dex_id": dex_id,
-        }))
+        .deposit(storage_deposit_amount)
+        .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "deploy_dex_code")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "last_part_of_id": dex_id_string,
             "code_base64": BASE64_STANDARD.encode(dex_wasm),
@@ -1716,7 +1767,7 @@ async fn test_regular_flow() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
 
     let initial_near_balance = dex_deployer_account.view_account().await.unwrap().balance;
     let mut total_near_burnt = NearToken::from_yoctonear(0);
@@ -1732,7 +1783,7 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near, AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Dex(dex_id.clone()),
@@ -1740,7 +1791,7 @@ async fn test_regular_flow() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
 
     assert_inner_asset_balance(
@@ -1763,7 +1814,7 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "register_assets")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_ids": [AssetId::Near, AssetId::Nep141(ft.id().clone())],
             "for": AccountOrDexId::Account(dex_deployer_account.id().clone()),
@@ -1771,23 +1822,23 @@ async fn test_regular_flow() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
 
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "deposit_near")
         .max_gas()
-        .deposit(NearToken::from_near(20))
+        .deposit(initial_near_deposit)
         .args_json(json!({}))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert_near_balance(
         &dex_deployer_account,
         initial_near_balance
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(total_near_burnt)
             .saturating_sub(NearToken::from_yoctonear(2)),
     )
@@ -1797,7 +1848,7 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(20).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -1805,14 +1856,14 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(ft.id(), "storage_deposit")
         .max_gas()
-        .deposit("0.00125 NEAR".parse().unwrap())
+        .deposit(storage_deposit_for_ft)
         .args_json(json!({
             "account_id": dex_engine_contract.id(),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
 
     let initial_ft_balance = ft
@@ -1835,21 +1886,21 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(ft.id(), "ft_transfer_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "receiver_id": dex_engine_contract.id(),
-            "amount": U128(1_000_000_000),
+            "amount": U128(ft_deposit_amount),
             "msg": "",
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert_ft_balance(
         &dex_deployer_account,
         ft.clone(),
-        U128(initial_ft_balance.0 - 1_000_000_000),
+        U128(initial_ft_balance.0 - ft_deposit_amount),
     )
     .await
     .unwrap();
@@ -1857,7 +1908,7 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
@@ -1875,7 +1926,7 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
-        Some(U128(NearToken::from_near(20).as_yoctonear())),
+        Some(U128(initial_near_deposit.as_yoctonear())),
     )
     .await
     .unwrap();
@@ -1883,7 +1934,7 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "method": "new",
@@ -1893,7 +1944,7 @@ async fn test_regular_flow() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert!(result.json::<Base64VecU8>().unwrap().0.is_empty());
 
@@ -1916,11 +1967,11 @@ async fn test_regular_flow() {
         .unwrap()
         .storage_usage;
 
-    let near_for_create_pool = NearToken::from_millinear(10);
+    let near_for_create_pool = pool_creation_fee;
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "method": "create_pool",
@@ -1934,7 +1985,7 @@ async fn test_regular_flow() {
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     let result = result.json::<Base64VecU8>().unwrap();
     let pool_id = near_sdk::borsh::from_slice::<CreatePoolResponse>(&result.0)
@@ -1983,8 +2034,8 @@ async fn test_regular_flow() {
         &dex_deployer_account,
         initial_near_balance
             .saturating_sub(total_near_burnt)
-            .saturating_sub("0.00125 NEAR".parse().unwrap())
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(storage_deposit_for_ft)
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(NearToken::from_yoctonear(5)),
     )
     .await
@@ -1994,7 +2045,7 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(20).as_yoctonear() - pool_storage_cost.as_yoctonear(),
+            initial_near_deposit.as_yoctonear() - pool_storage_cost.as_yoctonear(),
         )),
     )
     .await
@@ -2010,14 +2061,14 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000)),
+        Some(U128(ft_deposit_amount)),
     )
     .await
     .unwrap();
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "method": "add_liquidity",
@@ -2025,14 +2076,14 @@ async fn test_regular_flow() {
                 pool_id,
             }).unwrap()),
             "attached_assets": {
-                "near": U128(NearToken::from_near(1).as_yoctonear()),
-                format!("nep141:{}", ft.id()): U128(1_000_000),
+                "near": U128(add_liquidity_near.as_yoctonear()),
+                format!("nep141:{}", ft.id()): U128(add_liquidity_ft),
             },
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     let response = result.json::<Base64VecU8>().unwrap();
     let _ = near_sdk::borsh::from_slice::<AddLiquidityResponse>(&response.0).unwrap();
@@ -2040,8 +2091,8 @@ async fn test_regular_flow() {
         &dex_deployer_account,
         initial_near_balance
             .saturating_sub(total_near_burnt)
-            .saturating_sub("0.00125 NEAR".parse().unwrap())
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(storage_deposit_for_ft)
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(NearToken::from_yoctonear(6)),
     )
     .await
@@ -2051,9 +2102,9 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(20).as_yoctonear()
+            initial_near_deposit.as_yoctonear()
                 - pool_storage_cost.as_yoctonear()
-                - NearToken::from_near(1).as_yoctonear(),
+                - add_liquidity_near.as_yoctonear(),
         )),
     )
     .await
@@ -2062,7 +2113,7 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000 - 1_000_000)),
+        Some(U128(ft_deposit_amount - add_liquidity_ft)),
     )
     .await
     .unwrap();
@@ -2075,14 +2126,14 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000 - 1_000_000)),
+        Some(U128(ft_deposit_amount - add_liquidity_ft)),
     )
     .await
     .unwrap();
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "swap_simple")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "message": BASE64_STANDARD.encode(near_sdk::borsh::to_vec(&SwapArgs {
@@ -2090,11 +2141,12 @@ async fn test_regular_flow() {
             }).unwrap()),
             "asset_in": AssetId::Near,
             "asset_out": AssetId::Nep141(ft.id().clone()),
-            "amount": SwapRequestAmount::ExactIn(U128(NearToken::from_millinear(100).as_yoctonear())),
+            "amount": SwapRequestAmount::ExactIn(U128(swap_amount_in.as_yoctonear())),
         }))
         .transact()
-        .await.unwrap();
-    assert!(result.is_success());
+        .await
+        .unwrap();
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     let result: (U128, U128) = result.json().unwrap();
     assert_eq!(result, (U128(100000000000000000000000), U128(90909)));
@@ -2102,8 +2154,8 @@ async fn test_regular_flow() {
         &dex_deployer_account,
         initial_near_balance
             .saturating_sub(total_near_burnt)
-            .saturating_sub("0.00125 NEAR".parse().unwrap())
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(storage_deposit_for_ft)
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(NearToken::from_yoctonear(7)),
     )
     .await
@@ -2113,10 +2165,10 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(20).as_yoctonear()
+            initial_near_deposit.as_yoctonear()
                 - pool_storage_cost.as_yoctonear()
-                - NearToken::from_near(1).as_yoctonear()
-                - NearToken::from_millinear(100).as_yoctonear(),
+                - add_liquidity_near.as_yoctonear()
+                - swap_amount_in.as_yoctonear(),
         )),
     )
     .await
@@ -2125,7 +2177,7 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000 - 1_000_000 + 90909)),
+        Some(U128(ft_deposit_amount - add_liquidity_ft + 90909)),
     )
     .await
     .unwrap();
@@ -2140,20 +2192,20 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "dex_call")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "dex_id": dex_id.clone(),
             "method": "remove_liquidity",
             "args": BASE64_STANDARD.encode(near_sdk::borsh::to_vec(&RemoveLiquidityArgs {
                 pool_id,
-                assets_to_remove: (U128(NearToken::from_millinear(500).as_yoctonear()), U128(500_000)),
+                assets_to_remove: (U128(remove_liquidity_near.as_yoctonear()), U128(remove_liquidity_ft)),
             }).unwrap()),
             "attached_assets": {},
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     let response = result.json::<Base64VecU8>().unwrap();
     let _ = near_sdk::borsh::from_slice::<RemoveLiquidityResponse>(&response.0).unwrap();
@@ -2162,11 +2214,11 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(20).as_yoctonear()
+            initial_near_deposit.as_yoctonear()
                 - pool_storage_cost.as_yoctonear()
-                - NearToken::from_near(1).as_yoctonear()
-                - NearToken::from_millinear(100).as_yoctonear()
-                + NearToken::from_millinear(500).as_yoctonear(),
+                - add_liquidity_near.as_yoctonear()
+                - swap_amount_in.as_yoctonear()
+                + remove_liquidity_near.as_yoctonear(),
         )),
     )
     .await
@@ -2175,7 +2227,9 @@ async fn test_regular_flow() {
         &dex_engine_contract,
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
-        Some(U128(1_000_000_000 - 1_000_000 + 90909 + 500_000)),
+        Some(U128(
+            ft_deposit_amount - add_liquidity_ft + 90909 + remove_liquidity_ft,
+        )),
     )
     .await
     .unwrap();
@@ -2183,15 +2237,15 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Near,
-            "amount": U128(NearToken::from_near(1).as_yoctonear()),
+            "amount": U128(withdraw_near_amount.as_yoctonear()),
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert!(result.json::<bool>().unwrap());
     sandbox.fast_forward(1).await.unwrap();
@@ -2199,10 +2253,10 @@ async fn test_regular_flow() {
         &dex_deployer_account,
         initial_near_balance
             .saturating_sub(total_near_burnt)
-            .saturating_sub("0.00125 NEAR".parse().unwrap())
-            .saturating_sub(NearToken::from_near(20))
+            .saturating_sub(storage_deposit_for_ft)
+            .saturating_sub(initial_near_deposit)
             .saturating_sub(NearToken::from_yoctonear(9))
-            .saturating_add(NearToken::from_near(1)),
+            .saturating_add(withdraw_near_amount),
     )
     .await
     .unwrap();
@@ -2211,12 +2265,12 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Near,
         Some(U128(
-            NearToken::from_near(20).as_yoctonear()
+            initial_near_deposit.as_yoctonear()
                 - pool_storage_cost.as_yoctonear()
-                - NearToken::from_near(1).as_yoctonear()
-                - NearToken::from_millinear(100).as_yoctonear()
-                + NearToken::from_millinear(500).as_yoctonear()
-                - NearToken::from_near(1).as_yoctonear(),
+                - add_liquidity_near.as_yoctonear()
+                - swap_amount_in.as_yoctonear()
+                + remove_liquidity_near.as_yoctonear()
+                - withdraw_near_amount.as_yoctonear(),
         )),
     )
     .await
@@ -2225,22 +2279,22 @@ async fn test_regular_flow() {
     let result = dex_deployer_account
         .call(dex_engine_contract.id(), "withdraw")
         .max_gas()
-        .deposit(NearToken::from_yoctonear(1))
+        .deposit(one_yoctonear)
         .args_json(json!({
             "asset_id": AssetId::Nep141(ft.id().clone()),
-            "amount": U128(100_000_000),
+            "amount": U128(withdraw_ft_amount),
             "withdraw_to": null,
         }))
         .transact()
         .await
         .unwrap();
-    assert!(result.is_success());
+    assert_success(&result).unwrap();
     track_tokens_burnt(&result, &mut total_near_burnt);
     assert!(result.json::<bool>().unwrap());
     assert_ft_balance(
         &dex_deployer_account,
         ft.clone(),
-        U128(initial_ft_balance.0 - 1_000_000_000 + 100_000_000),
+        U128(initial_ft_balance.0 - ft_deposit_amount + withdraw_ft_amount),
     )
     .await
     .unwrap();
@@ -2249,7 +2303,7 @@ async fn test_regular_flow() {
         AccountOrDexId::Account(dex_deployer_account.id().clone()),
         AssetId::Nep141(ft.id().clone()),
         Some(U128(
-            1_000_000_000 - 1_000_000 + 90909 + 500_000 - 100_000_000,
+            ft_deposit_amount - add_liquidity_ft + 90909 + remove_liquidity_ft - withdraw_ft_amount,
         )),
     )
     .await
@@ -2291,14 +2345,13 @@ async fn test_regular_flow() {
                 AssetWithBalance {
                     asset_id: AssetId::Near,
                     balance: U128(
-                        NearToken::from_near(1).as_yoctonear()
-                            + NearToken::from_millinear(100).as_yoctonear()
-                            - NearToken::from_millinear(500).as_yoctonear()
+                        add_liquidity_near.as_yoctonear() + swap_amount_in.as_yoctonear()
+                            - remove_liquidity_near.as_yoctonear()
                     ),
                 },
                 AssetWithBalance {
                     asset_id: AssetId::Nep141(ft.id().clone()),
-                    balance: U128(1_000_000 - 90909 - 500_000),
+                    balance: U128(add_liquidity_ft - 90909 - remove_liquidity_ft),
                 },
             ),
             owner_id: dex_deployer_account.id().clone(),

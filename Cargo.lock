@@ -503,6 +503,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "crypto-bigint"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96272c2ff28b807e09250b180ad1fb7889a3258f7455759b5c3c58b719467130"
+dependencies = [
+ "num-traits",
+ "subtle",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1375,6 +1385,7 @@ version = "0.1.0"
 dependencies = [
  "intear-dex-types",
  "near-contract-standards",
+ "near-crypto",
  "near-sdk",
  "near-workspaces",
  "tokio",
@@ -2287,8 +2298,8 @@ dependencies = [
 name = "otc-dex"
 version = "0.1.0"
 dependencies = [
+ "crypto-bigint",
  "intear-dex-types",
- "near-crypto",
  "near-sdk",
  "talc",
 ]
@@ -2430,7 +2441,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05e4722c697a58a99d5d06a08c30821d7c082a4632198de1eaa5a6c22ef42373"
 dependencies = [
  "fixed-hash",
- "uint 0.9.5",
+ "uint",
 ]
 
 [[package]]
@@ -3045,10 +3056,10 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 name = "simple-amm-dex"
 version = "0.1.0"
 dependencies = [
+ "crypto-bigint",
  "intear-dex-types",
  "near-sdk",
  "talc",
- "uint 0.10.0",
 ]
 
 [[package]]
@@ -3563,18 +3574,6 @@ name = "uint"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76f64bba2c53b04fcab63c01a7d7427eadc821e3bc48c34dc9ba29c501164b52"
-dependencies = [
- "byteorder",
- "crunchy",
- "hex",
- "static_assertions",
-]
-
-[[package]]
-name = "uint"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "909988d098b2f738727b161a106cfc7cab00c539c2687a8836f8e565976fb53e"
 dependencies = [
  "byteorder",
  "crunchy",
