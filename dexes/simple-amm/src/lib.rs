@@ -38,26 +38,6 @@ enum StorageKey {
     Pools,
 }
 
-#[near(event_json(standard = "simpleswap"))]
-enum SimpleAmmDexEvent {
-    #[event_version("1.0.0")]
-    PoolCreated {
-        pool_id: PoolId,
-        owner_id: AccountId,
-        assets: (AssetId, AssetId),
-    },
-    #[event_version("1.0.0")]
-    LiquidityAdded {
-        pool_id: PoolId,
-        amounts: (U128, U128),
-    },
-    #[event_version("1.0.0")]
-    LiquidityRemoved {
-        pool_id: PoolId,
-        amounts: (U128, U128),
-    },
-}
-
 #[near]
 impl Dex for SimpleAmmDex {
     #[result_serializer(borsh)]
@@ -228,13 +208,6 @@ impl SimpleAmmDex {
             "No assets other than NEAR should be attached"
         );
 
-        SimpleAmmDexEvent::PoolCreated {
-            pool_id,
-            owner_id: near_sdk::env::predecessor_account_id(),
-            assets,
-        }
-        .emit();
-
         #[near(serializers=[borsh])]
         struct CreatePoolResponse {
             pool_id: PoolId,
@@ -307,12 +280,6 @@ impl SimpleAmmDex {
             .checked_add(asset_2_amount.0)
             .expect("Overflow");
 
-        SimpleAmmDexEvent::LiquidityAdded {
-            pool_id,
-            amounts: (asset_1_amount, asset_2_amount),
-        }
-        .emit();
-
         #[near(serializers=[borsh])]
         struct AddLiquidityResponse;
         let response = AddLiquidityResponse;
@@ -364,12 +331,6 @@ impl SimpleAmmDex {
             .0
             .checked_sub(assets_to_remove.1.0)
             .expect("Not enough balance for asset 2 withdrawal");
-
-        SimpleAmmDexEvent::LiquidityRemoved {
-            pool_id,
-            amounts: assets_to_remove,
-        }
-        .emit();
 
         #[near(serializers=[borsh])]
         struct RemoveLiquidityResponse;

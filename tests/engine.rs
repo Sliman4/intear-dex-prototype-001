@@ -12,7 +12,7 @@ use near_sdk::{
     json_types::{Base64VecU8, U128},
     near,
 };
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[tokio::test]
 async fn test_minimal() {
@@ -1244,7 +1244,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "new".to_string(),
             args: Base64VecU8(vec![]),
-            attached_assets: BTreeMap::new(),
+            attached_assets: HashMap::new(),
         },
         Operation::DexCall {
             dex_id: DexId {
@@ -1258,7 +1258,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
                 })
                 .unwrap(),
             ),
-            attached_assets: BTreeMap::from_iter([(
+            attached_assets: HashMap::from_iter([(
                 AssetId::Near,
                 U128(pool_creation_fee.as_yoctonear()),
             )]),
@@ -1278,7 +1278,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
                 })
                 .unwrap(),
             ),
-            attached_assets: BTreeMap::from_iter([(
+            attached_assets: HashMap::from_iter([(
                 AssetId::Near,
                 U128(pool_creation_fee.as_yoctonear()),
             )]),
@@ -1290,7 +1290,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "add_liquidity".to_string(),
             args: Base64VecU8(near_sdk::borsh::to_vec(&AddLiquidityArgs { pool_id: 0 }).unwrap()),
-            attached_assets: BTreeMap::from_iter([
+            attached_assets: HashMap::from_iter([
                 (AssetId::Near, U128(lp1_near_amount.as_yoctonear())),
                 (AssetId::Nep141(ft1.id().clone()), U128(lp1_ft1_amount)),
             ]),
@@ -1302,7 +1302,7 @@ async fn test_execute_operations_liquidity_and_swaps() {
             },
             method: "add_liquidity".to_string(),
             args: Base64VecU8(near_sdk::borsh::to_vec(&AddLiquidityArgs { pool_id: 1 }).unwrap()),
-            attached_assets: BTreeMap::from_iter([
+            attached_assets: HashMap::from_iter([
                 (AssetId::Nep141(ft1.id().clone()), U128(lp2_ft1_amount)),
                 (AssetId::Nep141(ft2.id().clone()), U128(lp2_ft2_amount)),
             ]),

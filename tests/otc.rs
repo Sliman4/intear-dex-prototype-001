@@ -15,7 +15,7 @@ use near_sdk::{
     near,
 };
 use near_workspaces::Contract;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 #[near(serializers=[borsh])]
 struct OtcStorageDepositArgs;
@@ -460,7 +460,7 @@ async fn test_otc_regular_flow() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::from_iter([(
+        attached_assets: HashMap::from_iter([(
             AssetId::Near,
             U128(trade_amount_near.as_yoctonear()),
         )]),
@@ -741,7 +741,7 @@ async fn test_otc_relayed_by_third_party() {
                 dex_id: dex_id.clone(),
                 method: "storage_deposit".to_string(),
                 args: Base64VecU8(near_sdk::borsh::to_vec(&OtcStorageDepositArgs).unwrap()),
-                attached_assets: BTreeMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
+                attached_assets: HashMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
             }],
         }))
         .transact()
@@ -838,7 +838,7 @@ async fn test_otc_relayed_by_third_party() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user3
@@ -1061,7 +1061,7 @@ async fn test_otc_single_intent_from_one_account_fails() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -1300,7 +1300,7 @@ async fn test_otc_mismatching_intents_fail() {
                 dex_id: dex_id.clone(),
                 method: "storage_deposit".to_string(),
                 args: Base64VecU8(near_sdk::borsh::to_vec(&OtcStorageDepositArgs).unwrap()),
-                attached_assets: BTreeMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
+                attached_assets: HashMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
             }],
         }))
         .transact()
@@ -1397,7 +1397,7 @@ async fn test_otc_mismatching_intents_fail() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -1694,7 +1694,7 @@ async fn test_otc_three_intents_with_same_value() {
                 dex_id: dex_id.clone(),
                 method: "storage_deposit".to_string(),
                 args: Base64VecU8(near_sdk::borsh::to_vec(&OtcStorageDepositArgs).unwrap()),
-                attached_assets: BTreeMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
+                attached_assets: HashMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
             }],
         }))
         .transact()
@@ -1745,7 +1745,7 @@ async fn test_otc_three_intents_with_same_value() {
                 dex_id: dex_id.clone(),
                 method: "storage_deposit".to_string(),
                 args: Base64VecU8(near_sdk::borsh::to_vec(&OtcStorageDepositArgs).unwrap()),
-                attached_assets: BTreeMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
+                attached_assets: HashMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
             }],
         }))
         .transact()
@@ -1870,7 +1870,7 @@ async fn test_otc_three_intents_with_same_value() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -2173,7 +2173,7 @@ async fn test_otc_nonces() {
                 dex_id: dex_id.clone(),
                 method: "storage_deposit".to_string(),
                 args: Base64VecU8(near_sdk::borsh::to_vec(&OtcStorageDepositArgs).unwrap()),
-                attached_assets: BTreeMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
+                attached_assets: HashMap::from_iter([(AssetId::Near, U128(storage_deposit_for_otc.as_yoctonear()))]),
             }],
         }))
         .transact()
@@ -2275,7 +2275,7 @@ async fn test_otc_nonces() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     // First use should succeed
@@ -2353,7 +2353,7 @@ async fn test_otc_nonces() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -2435,7 +2435,7 @@ async fn test_otc_nonces() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -2517,7 +2517,7 @@ async fn test_otc_nonces() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1
@@ -2596,7 +2596,7 @@ async fn test_otc_nonces() {
             })
             .unwrap(),
         ),
-        attached_assets: BTreeMap::new(),
+        attached_assets: HashMap::new(),
     }];
 
     let result = user1

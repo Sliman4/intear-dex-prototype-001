@@ -1,11 +1,6 @@
 #![deny(clippy::arithmetic_side_effects)]
 
-#[cfg(not(feature = "std"))]
-mod std {
-    extern crate alloc;
-    pub use alloc::{collections, fmt, str};
-}
-use std::{collections::BTreeMap, fmt, fmt::Display, str::FromStr};
+use std::{collections::HashMap, fmt, fmt::Display, str::FromStr};
 
 #[cfg(feature = "json")]
 use near_sdk::serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -51,7 +46,7 @@ pub struct SwapResponse {
 #[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[borsh])]
 pub struct DexCallRequest {
-    pub attached_assets: BTreeMap<AssetId, U128>,
+    pub attached_assets: HashMap<AssetId, U128>,
     pub args: Vec<u8>,
 }
 
