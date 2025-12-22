@@ -205,7 +205,7 @@ impl<K: Ord + BorshSerialize + BorshDeserialize + Clone> StorageBalances<K> {
         }
     }
 
-    pub fn storage_balance_bounds(&self) -> StorageBalanceBounds {
+    pub const fn storage_balance_bounds(&self) -> StorageBalanceBounds {
         StorageBalanceBounds {
             min: STORAGE_MIN_BOUND,
             max: None,
@@ -284,7 +284,7 @@ impl DexEngine {
         self.dex_storage_balances.storage_withdraw(dex_id, amount)
     }
 
-    pub fn dex_storage_balance_bounds(&self) -> StorageBalanceBounds {
+    pub const fn dex_storage_balance_bounds(&self) -> StorageBalanceBounds {
         self.dex_storage_balances.storage_balance_bounds()
     }
 

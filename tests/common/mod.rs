@@ -293,12 +293,12 @@ pub async fn ft_storage_deposit_for(ft: &Contract, account: &Account, for_accoun
 }
 
 /// Storage deposit amount for users on engine contract.
-pub fn engine_user_storage_deposit() -> NearToken {
+pub const fn engine_user_storage_deposit() -> NearToken {
     NearToken::from_near(1)
 }
 
 /// Storage deposit amount for DEX deployers on engine contract.
-pub fn engine_dex_storage_deposit() -> NearToken {
+pub const fn engine_dex_storage_deposit() -> NearToken {
     NearToken::from_near(20)
 }
 

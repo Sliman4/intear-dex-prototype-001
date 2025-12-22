@@ -249,7 +249,7 @@ impl DexEngine {
         }
         IntearDexEvent::Swap {
             dex_id: dex_id.clone(),
-            request: swap_request.clone(),
+            request: swap_request,
             amount_in: response.amount_in,
             amount_out: response.amount_out,
             trader: match trader {
@@ -609,7 +609,7 @@ impl DexEngine {
                 .function_call(
                     "mt_transfer",
                     near_sdk::serde_json::json!({
-                        "receiver_id": withdraw_to.clone(),
+                        "receiver_id": withdraw_to,
                         "token_id": token_id,
                         "amount": amount,
                         "approval": null,

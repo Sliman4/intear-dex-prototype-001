@@ -173,7 +173,7 @@ impl SimpleAmmDex {
                         balance: U128(0),
                     },
                     AssetWithBalance {
-                        asset_id: assets.1.clone(),
+                        asset_id: assets.1,
                         balance: U128(0),
                     },
                 ),

@@ -146,7 +146,7 @@ enum CallType<'a> {
 type DexStorage = LookupMap<(DexId, Vec<u8>), Vec<u8>>;
 
 impl CallType<'_> {
-    pub fn dex_storage(&self) -> &DexStorage {
+    pub const fn dex_storage(&self) -> &DexStorage {
         match self {
             CallType::Trade { dex_storage_mut } => dex_storage_mut,
             CallType::View { dex_storage } => dex_storage,
@@ -156,7 +156,7 @@ impl CallType<'_> {
         }
     }
 
-    pub fn dex_storage_mut(&mut self) -> Option<&mut DexStorage> {
+    pub const fn dex_storage_mut(&mut self) -> Option<&mut DexStorage> {
         match self {
             CallType::Trade { dex_storage_mut } => Some(dex_storage_mut),
             CallType::View { .. } => None,

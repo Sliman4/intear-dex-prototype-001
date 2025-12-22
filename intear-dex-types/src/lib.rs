@@ -89,10 +89,10 @@ pub enum AssetId {
 impl Display for AssetId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AssetId::Near => write!(f, "near"),
-            AssetId::Nep141(contract_id) => write!(f, "nep141:{contract_id}"),
-            AssetId::Nep245(contract_id, token_id) => write!(f, "nep245:{contract_id}:{token_id}"),
-            AssetId::Nep171(contract_id, token_id) => write!(f, "nep171:{contract_id}:{token_id}"),
+            Self::Near => write!(f, "near"),
+            Self::Nep141(contract_id) => write!(f, "nep141:{contract_id}"),
+            Self::Nep245(contract_id, token_id) => write!(f, "nep245:{contract_id}:{token_id}"),
+            Self::Nep171(contract_id, token_id) => write!(f, "nep171:{contract_id}:{token_id}"),
         }
     }
 }
@@ -101,16 +101,16 @@ impl FromStr for AssetId {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "near" => Ok(AssetId::Near),
+            "near" => Ok(Self::Near),
             _ => match s.split_once(':') {
                 Some(("nep141", contract_id)) => {
-                    Ok(AssetId::Nep141(contract_id.parse().map_err(|e| {
+                    Ok(Self::Nep141(contract_id.parse().map_err(|e| {
                         format!("Invalid account id {contract_id}: {e}")
                     })?))
                 }
                 Some(("nep245", rest)) => {
                     if let Some((contract_id, token_id)) = rest.split_once(':') {
-                        Ok(AssetId::Nep245(
+                        Ok(Self::Nep245(
                             contract_id
                                 .parse()
                                 .map_err(|e| format!("Invalid account id {contract_id}: {e}"))?,
@@ -122,7 +122,7 @@ impl FromStr for AssetId {
                 }
                 Some(("nep171", rest)) => {
                     if let Some((contract_id, token_id)) = rest.split_once(':') {
-                        Ok(AssetId::Nep171(
+                        Ok(Self::Nep171(
                             contract_id
                                 .parse()
                                 .map_err(|e| format!("Invalid account id {contract_id}: {e}"))?,
@@ -155,7 +155,7 @@ impl<'de> Deserialize<'de> for AssetId {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(AssetId::from_str(&s).unwrap())
+        Ok(Self::from_str(&s).unwrap())
     }
 }
 
@@ -198,7 +198,7 @@ impl FromStr for DexId {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (deployer, id) = s.split_once('/').ok_or(format!("Invalid dex id: {s}"))?;
-        Ok(DexId {
+        Ok(Self {
             deployer: deployer
                 .parse()
                 .map_err(|e| format!("Invalid deployer id {deployer}: {e}"))?,
@@ -224,7 +224,7 @@ impl<'de> Deserialize<'de> for DexId {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Ok(DexId::from_str(&s).unwrap())
+        Ok(Self::from_str(&s).unwrap())
     }
 }
 

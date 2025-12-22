@@ -5,7 +5,7 @@ use near_sdk::{AccountId, json_types::U128, near};
 
 use crate::{DexEngine, IntearDexEvent};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(debug_assertions, derive(Debug))]
 #[near(serializers=[json])]
 pub enum AccountOrDexId {
@@ -16,8 +16,8 @@ pub enum AccountOrDexId {
 impl Display for AccountOrDexId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AccountOrDexId::Account(account) => write!(f, "Account({account})"),
-            AccountOrDexId::Dex(dex_id) => write!(f, "Dex({dex_id})"),
+            Self::Account(account) => write!(f, "Account({account})"),
+            Self::Dex(dex_id) => write!(f, "Dex({dex_id})"),
         }
     }
 }
@@ -54,7 +54,7 @@ impl DexEngine {
             return;
         }
         self.internal_decrease_assets(from, asset_id.clone(), amount);
-        self.internal_increase_assets(to, asset_id.clone(), amount);
+        self.internal_increase_assets(to, asset_id, amount);
     }
 
     pub fn assert_has_enough(
@@ -101,8 +101,8 @@ impl DexEngine {
                     })
                     .or_insert_with(|| panic!("Failed to deposit assets to user balance: user {account} balance for asset {asset_id} was not found"));
                 IntearDexEvent::UserBalanceUpdate {
-                    account_id: account.clone(),
-                    asset_id: asset_id.clone(),
+                    account_id: account,
+                    asset_id,
                     balance,
                 }
                 .emit();
@@ -115,8 +115,8 @@ impl DexEngine {
                     })
                     .or_insert_with(|| panic!("Failed to deposit assets to dex balance: dex {dex_id} balance for asset {asset_id} was not found"));
                 IntearDexEvent::DexBalanceUpdate {
-                    dex_id: dex_id.clone(),
-                    asset_id: asset_id.clone(),
+                    dex_id,
+                    asset_id,
                     balance,
                 }
                 .emit();
@@ -141,8 +141,8 @@ impl DexEngine {
                         panic!("Failed to withdraw assets from user balance: user {account} balance for asset {asset_id} was not found")
                     });
                 IntearDexEvent::UserBalanceUpdate {
-                    account_id: account.clone(),
-                    asset_id: asset_id.clone(),
+                    account_id: account,
+                    asset_id,
                     balance,
                 }
                 .emit();
@@ -157,8 +157,8 @@ impl DexEngine {
                         panic!("Failed to withdraw assets from dex balance: dex {dex_id} balance for asset {asset_id} was not found")
                     });
                 IntearDexEvent::DexBalanceUpdate {
-                    dex_id: dex_id.clone(),
-                    asset_id: asset_id.clone(),
+                    dex_id,
+                    asset_id,
                     balance,
                 }
                 .emit();

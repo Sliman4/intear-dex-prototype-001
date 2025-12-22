@@ -91,7 +91,7 @@ impl FungibleTokenReceiver for DexEngine {
         if let Some(operations) = operations {
             self.internal_execute_operations(
                 operations,
-                sender_id.clone(),
+                sender_id,
                 Some(HashMap::from_iter([(AssetId::Nep141(contract_id), amount)])),
             );
         } else {
@@ -101,8 +101,8 @@ impl FungibleTokenReceiver for DexEngine {
                 amount,
             );
             IntearDexEvent::UserDeposit {
-                account_id: sender_id.clone(),
-                asset_id: AssetId::Nep141(contract_id.clone()),
+                account_id: sender_id,
+                asset_id: AssetId::Nep141(contract_id),
                 amount,
             }
             .emit();
@@ -151,9 +151,9 @@ impl NonFungibleTokenReceiver for DexEngine {
         if let Some(operations) = operations {
             self.internal_execute_operations(
                 operations,
-                previous_owner_id.clone(),
+                previous_owner_id,
                 Some(HashMap::from_iter([(
-                    AssetId::Nep171(contract_id, token_id.to_string()),
+                    AssetId::Nep171(contract_id, token_id),
                     U128(1),
                 )])),
             );
@@ -164,8 +164,8 @@ impl NonFungibleTokenReceiver for DexEngine {
                 U128(1),
             );
             IntearDexEvent::UserDeposit {
-                account_id: previous_owner_id.clone(),
-                asset_id: AssetId::Nep171(contract_id.clone(), token_id.to_string()),
+                account_id: previous_owner_id,
+                asset_id: AssetId::Nep171(contract_id, token_id),
                 amount: U128(1),
             }
             .emit();
@@ -230,7 +230,7 @@ impl DexEngine {
         if let Some(operations) = operations {
             self.internal_execute_operations(
                 operations,
-                sender_id.clone(),
+                sender_id,
                 Some(HashMap::from_iter(
                     token_ids
                         .iter()
