@@ -153,7 +153,7 @@ impl SimpleAmmDex {
             assets: (AssetId, AssetId),
         }
         let Ok(CreatePoolArgs { assets }) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         expect!(assets.0 != assets.1, "Assets must be different");
 
@@ -246,7 +246,7 @@ impl SimpleAmmDex {
             pool_id: PoolId,
         }
         let Ok(AddLiquidityArgs { pool_id }) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         let Some(pool) = self.pools.get_mut(&pool_id) else {
             panic!("Pool not found");
@@ -307,7 +307,7 @@ impl SimpleAmmDex {
             assets_to_remove,
         }) = near_sdk::borsh::from_slice(&args)
         else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         expect!(attached_assets.is_empty(), "No assets should be attached");
         let Some(pool) = self.pools.get_mut(&pool_id) else {

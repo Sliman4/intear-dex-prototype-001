@@ -3,7 +3,7 @@
 
 extern crate alloc;
 use alloc::{vec, vec::Vec};
-use intear_dex_types::{SwapRequest, SwapRequestAmount, SwapResponse, expect};
+use intear_dex_types::{SwapRequest, SwapRequestAmount, SwapResponse};
 
 #[global_allocator]
 static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
@@ -52,8 +52,8 @@ fn swap() {
         SwapRequestAmount::ExactIn(amount) => amount,
         SwapRequestAmount::ExactOut(amount) => amount,
     };
-    expect!(
-        request.asset_in == request.asset_out,
+    assert_eq!(
+        request.asset_in, request.asset_out,
         "Asset in and asset out must be the same, since this dex is a no-op"
     );
     let response = SwapResponse {

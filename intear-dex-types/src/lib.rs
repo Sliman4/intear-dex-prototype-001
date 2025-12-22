@@ -248,7 +248,7 @@ pub trait Dex {
 macro_rules! expect {
     ($condition:expr, $message:literal $(, $fmt_args:expr)* $(,)?) => {
         if !$condition {
-            panic!($message $(, $fmt_args)*);
+            ::near_sdk::env::panic_str(&::std::format!($message $(, $fmt_args)*));
         }
     };
 }

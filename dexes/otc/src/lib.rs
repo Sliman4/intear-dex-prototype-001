@@ -14,13 +14,6 @@ use near_sdk::{
     store::{LookupMap, LookupSet, TreeMap},
 };
 
-#[global_allocator]
-static ALLOCATOR: talc::Talck<talc::locking::AssumeUnlockable, talc::ClaimOnOom> = {
-    static mut MEMORY: [u8; 0x8000] = [0; 0x8000]; // 32KB
-    let span = talc::Span::from_array(core::ptr::addr_of!(MEMORY).cast_mut());
-    talc::Talc::new(unsafe { talc::ClaimOnOom::new(span) }).lock()
-};
-
 #[near(serializers=[borsh])]
 #[derive(BorshStorageKey)]
 enum StorageKey {
@@ -72,7 +65,7 @@ pub struct AuthorizedTradeIntent {
 }
 
 impl AuthorizedTradeIntent {
-    fn validate(&self, dex: &OtcDex, other_user_ids: &[&AccountId]) {
+    fn validate(&self, dex: &OtcDex, all_user_ids: &[&AccountId]) {
         if let Some(expiry) = &self.trade_intent.validity.expiry {
             match expiry {
                 ExpiryCondition::BlockHeight(block_height) => {
@@ -93,11 +86,13 @@ impl AuthorizedTradeIntent {
         if let Some(only_for_whitelisted_parties) =
             &self.trade_intent.validity.only_for_whitelisted_parties
         {
-            for other_user_id in other_user_ids {
-                expect!(
-                    only_for_whitelisted_parties.contains(*other_user_id),
-                    "Intent not authorized: User not whitelisted"
-                );
+            for other_user_id in all_user_ids {
+                if **other_user_id != self.trade_intent.user_id {
+                    expect!(
+                        only_for_whitelisted_parties.contains(*other_user_id),
+                        "Intent not authorized: User {other_user_id} not whitelisted"
+                    );
+                }
             }
         }
         match &self.authorization_method {
@@ -149,6 +144,7 @@ impl AuthorizedTradeIntent {
 }
 
 #[near(serializers=[json, borsh])]
+#[derive(Debug)]
 pub struct TradeIntent {
     user_id: AccountId,
     asset_in: AssetId,
@@ -159,7 +155,7 @@ pub struct TradeIntent {
     validity: Validity,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Debug)]
 #[near(serializers=[json, borsh])]
 pub struct Validity {
     expiry: Option<ExpiryCondition>,
@@ -171,7 +167,7 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     value == &T::default()
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 #[near(serializers=[borsh, json])]
 pub enum ExpiryCondition {
     BlockHeight(BlockHeight),
@@ -246,7 +242,7 @@ impl OtcDex {
             output_destination,
         }) = near_sdk::borsh::from_slice(&args)
         else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
 
         let mut all_required_assets_were_attached = false;
@@ -264,7 +260,6 @@ impl OtcDex {
                                     .expect("Required amount overflow")
                         })
                         .or_insert(authorized_trade_intent.trade_intent.amount_in);
-                    break;
                 }
             }
             expect!(
@@ -281,35 +276,30 @@ impl OtcDex {
         let mut assets_net_change = HashMap::<AssetId, I256>::new();
         for AuthorizedTradeIntent { trade_intent, .. } in authorized_trade_intents.iter() {
             // in
-            let asset_id = trade_intent.asset_in.clone();
-            let amount =
+            let asset_in = trade_intent.asset_in.clone();
+            let amount_in =
                 I256::new_from_abs_sign(U256::from(trade_intent.amount_in.0), ConstChoice::TRUE)
                     .unwrap();
             assets_net_change
-                .entry(asset_id)
-                .and_modify(|b| *b = b.checked_add(&amount).expect("Amount overflow"))
-                .or_insert(amount);
+                .entry(asset_in)
+                .and_modify(|b| *b = b.checked_add(&amount_in).expect("Amount overflow"))
+                .or_insert(amount_in);
 
             // out
-            let asset_id = trade_intent.asset_out.clone();
-            let amount =
+            let asset_out = trade_intent.asset_out.clone();
+            let amount_out =
                 I256::new_from_abs_sign(U256::from(trade_intent.amount_out.0), ConstChoice::FALSE)
                     .unwrap();
             assets_net_change
-                .entry(asset_id)
-                .and_modify(|b| *b = b.checked_add(&amount).expect("Amount overflow"))
-                .or_insert(amount);
+                .entry(asset_out)
+                .and_modify(|b| *b = b.checked_add(&amount_out).expect("Amount overflow"))
+                .or_insert(amount_out);
         }
 
         for (asset_id, net_change) in assets_net_change.iter() {
             if *net_change != I256::ZERO {
                 panic!(
-                    "Asset {asset_id} net sum is not zero: calculated {sign}{net_change} as total sum of all trade intents",
-                    sign = if net_change.is_negative().into() {
-                        ""
-                    } else {
-                        "+"
-                    }
+                    "Asset {asset_id} net sum is not zero: calculated {net_change} as total sum of all trade intents",
                 );
             }
         }
@@ -520,7 +510,7 @@ impl OtcDex {
         #[near(serializers=[borsh])]
         struct StorageDepositArgs;
         let Ok(StorageDepositArgs) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         let predecessor_id = near_sdk::env::predecessor_account_id();
         let Some(attached_near) = attached_assets.remove(&AssetId::Near) else {
@@ -562,7 +552,7 @@ impl OtcDex {
             key: PublicKey,
         }
         let Ok(SetAuthorizedKeyArgs { key }) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         expect!(attached_assets.is_empty(), "No assets should be attached");
         let storage_usage_before = near_sdk::env::storage_usage();
@@ -594,7 +584,7 @@ impl OtcDex {
         #[near(serializers=[borsh])]
         struct DepositAssetsArgs;
         let Ok(DepositAssetsArgs) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         let storage_usage_before = near_sdk::env::storage_usage();
         for (asset_id, amount) in attached_assets.iter() {
@@ -635,7 +625,7 @@ impl OtcDex {
             to_inner_balance: bool,
         }
         let Ok(WithdrawAssetsArgs { assets }) = near_sdk::borsh::from_slice(&args) else {
-            panic!("Invalid args");
+            near_sdk::env::panic_str("Invalid args");
         };
         expect!(attached_assets.is_empty(), "No assets should be attached");
         let storage_usage_before = near_sdk::env::storage_usage();

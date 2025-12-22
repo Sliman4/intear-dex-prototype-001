@@ -413,6 +413,7 @@ async fn test_otc_regular_flow() {
     let user2 = sandbox.dev_create_account().await.unwrap();
     ft_storage_deposit(&ft1, &user2).await;
 
+    // User 1's trade intent: sell 100_000_000 FT for 2 NEAR
     let user1_trade_intent = OtcTradeIntent {
         user_id: deployer.id().clone(),
         asset_in: AssetId::Nep141(ft1.id().clone()),
@@ -435,7 +436,7 @@ async fn test_otc_regular_flow() {
         authorization_method: OtcAuthorizationMethod::Signature(user1_signature),
     };
 
-    // User 2's trade intent: sell 2 NEAR for 100_000_000 FT (matches user1)
+    // User 2's trade intent: sell 2 NEAR for 100_000_000 FT
     let user2_trade_intent = OtcTradeIntent {
         user_id: user2.id().clone(),
         asset_in: AssetId::Near,
