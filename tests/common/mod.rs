@@ -2,8 +2,9 @@
 
 use intear_dex::internal_asset_operations::AccountOrDexId;
 use intear_dex_types::AssetId;
+use near_crypto::KeyType;
 use near_sdk::serde_json::json;
-use near_sdk::{NearToken, json_types::U128};
+use near_sdk::{AccountId, NearToken, json_types::U128};
 use near_workspaces::result::ExecutionFinalResult;
 use near_workspaces::{Account, Contract};
 use tokio::process::Command;
@@ -205,4 +206,180 @@ pub fn assert_success(result: &ExecutionFinalResult) -> Result<(), String> {
         return Err("Not successful".to_string());
     }
     Ok(())
+}
+
+/// Create a new user account.
+pub async fn create_user(
+    sandbox: &near_workspaces::Worker<near_workspaces::network::Sandbox>,
+    name: &str,
+) -> (near_workspaces::Account, near_crypto::SecretKey) {
+    let key = near_crypto::SecretKey::from_random(KeyType::ED25519);
+    let account = sandbox
+        .create_root_account_subaccount(name.parse().unwrap(), key.to_string().parse().unwrap())
+        .await
+        .unwrap()
+        .result;
+    (account, key)
+}
+
+/// Storage deposit amount for FT contracts.
+fn ft_storage_deposit_amount() -> NearToken {
+    "0.00125 NEAR".parse().unwrap()
+}
+
+/// Register storage for a user account on an FT contract.
+pub async fn ft_storage_deposit(ft: &Contract, account: &Account) {
+    account
+        .call(ft.id(), "storage_deposit")
+        .args_json(json!({}))
+        .deposit(ft_storage_deposit_amount())
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+}
+
+/// Register storage for another account on an FT contract (e.g., for dex engine contract).
+pub async fn ft_storage_deposit_for(ft: &Contract, account: &Account, for_account: &AccountId) {
+    account
+        .call(ft.id(), "storage_deposit")
+        .args_json(json!({
+            "account_id": for_account,
+        }))
+        .deposit(ft_storage_deposit_amount())
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+}
+
+/// Storage deposit amount for users on engine contract.
+pub fn engine_user_storage_deposit() -> NearToken {
+    NearToken::from_near(1)
+}
+
+/// Storage deposit amount for DEX deployers on engine contract.
+pub fn engine_dex_storage_deposit() -> NearToken {
+    NearToken::from_near(20)
+}
+
+pub struct TestContext {
+    pub sandbox: near_workspaces::Worker<near_workspaces::network::Sandbox>,
+    pub dex_engine_contract: Contract,
+    pub user1: near_workspaces::Account,
+    pub user1_key: near_crypto::SecretKey,
+    pub user2: near_workspaces::Account,
+    pub user2_key: near_crypto::SecretKey,
+    pub user3: near_workspaces::Account,
+    pub user3_key: near_crypto::SecretKey,
+    pub user4: near_workspaces::Account,
+    pub user4_key: near_crypto::SecretKey,
+    pub user5: near_workspaces::Account,
+    pub user5_key: near_crypto::SecretKey,
+    pub deployer: near_workspaces::Account,
+    pub ft1: Contract,
+    pub ft2: Contract,
+    pub ft3: Contract,
+}
+
+/// Set up the basic test environment
+pub async fn setup_test_environment() -> TestContext {
+    let wasms = get_compiled_wasms().await;
+    let sandbox = near_workspaces::sandbox().await.unwrap();
+    let dex_engine_contract = sandbox.dev_deploy(&wasms.contract_wasm).await.unwrap();
+
+    let (user1, user1_key) = create_user(&sandbox, "user1").await;
+    let (user2, user2_key) = create_user(&sandbox, "user2").await;
+    let (user3, user3_key) = create_user(&sandbox, "user3").await;
+    let (user4, user4_key) = create_user(&sandbox, "user4").await;
+    let (user5, user5_key) = create_user(&sandbox, "user5").await;
+
+    let deployer = sandbox.dev_create_account().await.unwrap();
+
+    let ft_total_supply = NearToken::from_near(1_000_000_000_000);
+
+    let ft1 = sandbox
+        .create_root_account_subaccount_and_deploy(
+            "ft1".parse().unwrap(),
+            near_crypto::SecretKey::from_random(KeyType::ED25519)
+                .to_string()
+                .parse()
+                .unwrap(),
+            &wasms.ft_wasm,
+        )
+        .await
+        .unwrap()
+        .result;
+    ft1.call("new_default_meta")
+        .args_json(json!({
+            "owner_id": deployer.id(),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+
+    let ft2 = sandbox
+        .create_root_account_subaccount_and_deploy(
+            "ft2".parse().unwrap(),
+            near_crypto::SecretKey::from_random(KeyType::ED25519)
+                .to_string()
+                .parse()
+                .unwrap(),
+            &wasms.ft_wasm,
+        )
+        .await
+        .unwrap()
+        .result;
+    ft2.call("new_default_meta")
+        .args_json(json!({
+            "owner_id": deployer.id(),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+
+    let ft3 = sandbox
+        .create_root_account_subaccount_and_deploy(
+            "ft3".parse().unwrap(),
+            near_crypto::SecretKey::from_random(KeyType::ED25519)
+                .to_string()
+                .parse()
+                .unwrap(),
+            &wasms.ft_wasm,
+        )
+        .await
+        .unwrap()
+        .result;
+    ft3.call("new_default_meta")
+        .args_json(json!({
+            "owner_id": deployer.id(),
+            "total_supply": U128(ft_total_supply.as_yoctonear()),
+        }))
+        .max_gas()
+        .transact()
+        .await
+        .unwrap();
+
+    TestContext {
+        sandbox,
+        dex_engine_contract,
+        user1,
+        user1_key,
+        user2,
+        user2_key,
+        user3,
+        user3_key,
+        user4,
+        user4_key,
+        user5,
+        user5_key,
+        deployer,
+        ft1,
+        ft2,
+        ft3,
+    }
 }
